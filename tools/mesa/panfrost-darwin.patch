@@ -11,16 +11,19 @@
    # source file is built with freedreno's drm layer, src/freedreno/drm).
 --- a/src/panfrost/lib/kmod/pan_kmod.h
 +++ b/src/panfrost/lib/kmod/pan_kmod.h
-@@ -615,8 +615,16 @@
+@@ -615,8 +615,19 @@
     if (mmap_offset < 0)
        return MAP_FAILED;
  
 +#ifdef __APPLE__
++   /* (Darwin on redwood: a buffer is the user client's memory of the type that is its handle,
++    * mapped whole; the caller asked for the part that starts at bo_offset) */
 +   (void)mmap_offset;
-+   (void)bo_offset;
 +   (void)prot;
 +   (void)flags;
-+   host_addr = hakios_drm_map(bo->dev->fd, bo->handle, size);
++   host_addr = hakios_drm_map(bo->dev->fd, bo->handle, bo->size);
++   if (host_addr != MAP_FAILED)
++      host_addr = (uint8_t *)host_addr + bo_offset;
 +#else
     host_addr = os_mmap(host_addr, size, prot, flags, bo->dev->fd,
                         mmap_offset + bo_offset);
@@ -28,6 +31,22 @@
     if (host_addr == MAP_FAILED) {
        mesa_loge("mmap(..., size=%zu, prot=%d, flags=0x%x) failed: %s",
                  size, prot, flags, strerror(errno));
+--- a/src/panfrost/lib/kmod/pan_kmod.c
++++ b/src/panfrost/lib/kmod/pan_kmod.c
+@@ -176,7 +176,13 @@
+ 
+       p_atomic_inc(&bo->refcnt);
+    } else {
++#ifdef __APPLE__
++      /* (what comes in here is an IOSurface, and the "file descriptor" its ID: hakios-drm) */
++      struct hakios_drm_surface surface = { .surface = (uint32_t)fd };
++      size_t size = hakios_drm_surface(dev->fd, &surface) ? 0 : surface.size;
++#else
+       size_t size = lseek(fd, 0, SEEK_END);
++#endif
+       if (size == 0 || size == (size_t)-1) {
+          mesa_loge("invalid dmabuf size");
+          goto err_close_handle;
 --- a/src/gallium/drivers/panfrost/pan_bo.c
 +++ b/src/gallium/drivers/panfrost/pan_bo.c
 @@ -35,6 +35,9 @@
@@ -40,6 +59,51 @@
  
  #include "util/u_inlines.h"
  #include "util/u_math.h"
+@@ -121,10 +124,18 @@
+    return NULL;
+ }
+ 
++#ifdef __APPLE__
++static void panfrost_bo_munmap(struct panfrost_bo *bo);
++#endif
++
+ static void
+ panfrost_bo_free(struct panfrost_bo *bo)
+ {
+    struct pan_kmod_bo *kmod_bo = bo->kmod_bo;
++#ifdef __APPLE__
++   /* (Darwin on redwood: a cached BO keeps its CPU mapping, see panfrost_bo_unreference) */
++   panfrost_bo_munmap(bo);
++#endif
+    struct pan_kmod_vm *vm = bo->dev->kmod.vm;
+    uint64_t gpu_va = bo->ptr.gpu;
+ 
+@@ -355,10 +366,15 @@
+    if (!bo->ptr.cpu)
+       return;
+ 
++#ifdef __APPLE__
++   hakios_drm_unmap(panfrost_device_fd(bo->dev), pan_kmod_bo_handle(bo->kmod_bo),
++                    (void *)(uintptr_t)bo->ptr.cpu);
++#else
+    if (os_munmap((void *)(uintptr_t)bo->ptr.cpu, panfrost_bo_size(bo))) {
+       mesa_loge("munmap failed: %s", strerror(errno));
+       abort();
+    }
++#endif
+ 
+    bo->ptr.cpu = NULL;
+ }
+@@ -459,7 +475,9 @@
+     */
+    if (p_atomic_read(&bo->refcnt) == 0) {
+       /* When the reference count goes to zero, we need to cleanup */
++#ifndef __APPLE__
+       panfrost_bo_munmap(bo);
++#endif
+ 
+       if (dev->debug & (PAN_DBG_TRACE | PAN_DBG_SYNC))
+          pandecode_inject_free(dev->decode_ctx, bo->ptr.gpu,
 --- a/src/gallium/targets/osmesa/osmesa_target.c
 +++ b/src/gallium/targets/osmesa/osmesa_target.c
 @@ -30,6 +30,43 @@
@@ -86,6 +150,24 @@
  #ifdef GALLIUM_FREEDRENO
  #include "freedreno/drm/freedreno_drm_public.h"
  #include "util/driconf.h"
+@@ -79,7 +116,7 @@
+ struct pipe_resource *
+ osmesa_surface_resource(struct pipe_screen *screen, uint32_t surface)
+ {
+-#ifdef GALLIUM_FREEDRENO
++#if defined(GALLIUM_FREEDRENO) || defined(GALLIUM_PANFROST)
+    struct hakios_drm_surface s = { .surface = surface };
+    struct pipe_resource templ = {
+       .target = PIPE_TEXTURE_2D,
+@@ -90,7 +127,7 @@
+    };
+    struct winsys_handle handle = { .type = WINSYS_HANDLE_TYPE_FD };
+ 
+-   if (gpu_fd < 0 || hakios_drm_surface(gpu_fd, &s) != 0)
++   if ((gpu_fd < 0 && panfrost_fd < 0) || hakios_drm_surface(gpu_fd >= 0 ? gpu_fd : panfrost_fd, &s) != 0)
+       return NULL;
+    if (s.pixel_format != 0x42475241 /* 'BGRA' */ || s.planes != 0)
+       return NULL;
 @@ -118,6 +155,11 @@
     struct sw_winsys *winsys;
     struct pipe_screen *screen;

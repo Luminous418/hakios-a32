@@ -123,3 +123,24 @@ with `JS_STATUS 0x58 DATA_INVALID_FAULT`. The service receives the address from 
 suspect is how panfrost 25 computes/reuses the job-pool address (a 0x40 offset), not the GPU or
 the ioctls. The next comparison would be with the Infinix's working Mesa/panfrost, which is not
 published.
+
+## The blit works (test54)
+
+Two fixes from the public `y2sios` port made panfrost's blit run:
+
+- `pan_kmod_bo_mmap` must map the **whole** BO and add `bo_offset` to the host address; ours
+  ignored it, so the job descriptor was written 0x40 before its GPU address (the
+  `DATA_INVALID_FAULT` of test52);
+- `panfrost_bo_munmap` must not unmap at reference count 0: the BO cache keeps the mapping and
+  the unmap goes in `panfrost_bo_free` (`panfrost-keepmap`), through `hakios_drm_unmap`.
+
+With both, `gl_test` draws and reads the triangle back:
+
+```
+gl_test: reading 256 x 256 back
+gl_test: 17086 of 65536 pixels coloured   (26%, the triangle's geometry)
+RedwoodMali: a client goes after 4 job chains, 0 of them unfinished
+```
+
+The IOSurface import for CoreAnimation adds the surface's size in `pan_kmod.c` (the "file
+descriptor" is the IOSurface's ID) and `osmesa_surface_resource` built for panfrost.
