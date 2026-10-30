@@ -235,6 +235,28 @@ readable, and the lock screen has it too. `a wallpaper gradient behind N view(s)
 which views were found. It is a placeholder, not Apple's poster (no video, no depth, no
 ProceduralWallpaper), but it is drawn by CoreAnimation on the Mali like everything else.
 
+## Tearing and the swap's sequence (test77)
+
+The first frames of CoreAnimation on Metal tore: a Settings sheet over the home screen came out in
+horizontal bands of the previous frame. The display's log named the cause:
+
+```
+MiniIOMobileFramebuffer: swap 1402: the GPU is not done with surface 3 after 500 ms; shown as it is
+```
+
+The display waits, per surface, for the job that drew it before copying it to the panel. It read
+that job from `surface->maliSeq` **at the moment of showing**, and `maliSeq` is the last job that
+named the surface -- including jobs that only READ it, such as the blur of the screen behind a
+sheet. A later blur moved the sequence on, the display waited for work that had nothing to do with
+the frame, gave up after 500 ms and copied a surface still being drawn.
+
+The swap now takes the sequence **when it is queued** (`present()` copies `maliSeq` into
+`fSwapSeq`), and `show()` waits for that snapshot. Measured on the phone: the `GPU is not done`
+lines went from two or more a run to **zero**, and the heavy tearing of that picture is gone.
+Some glitches remain (a band of a second gradient from a nested controller was one of them, now
+inserted only in the controller that owns the whole screen; partial redraws of moving icons are
+still visible), which is the next thing to chase.
+
 ## What is next
 
 - The per-draw cost of panfrost's command submission, which is what sets the frame rate

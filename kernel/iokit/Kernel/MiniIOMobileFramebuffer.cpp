@@ -32,6 +32,7 @@ extern "C" {
 #include <console/video_console.h>
 extern struct vc_info vinfo;            /* the boot framebuffer, as the text console knows it */
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+extern bool redwood_mali_wait(uint64_t seq, uint64_t timeout_ns);   /* bsd/dev/hakios.mali.c */
 }
 
 /*
@@ -308,6 +309,15 @@ public:
 	IOLock *        fSwapLock;              /* around the next five */
 	uint8_t         fSwap[SWAP_QUEUE][SWAP_SIZE];   /* the swaps on their way to the panel (fb_queue), from fSwapFirst on */
 	MiniIOSurface * fSwapSurfaces[SWAP_QUEUE][SWAP_LAYERS]; /* ... their surfaces, held from SwapEnd on: their maker may let go of them */
+	/*
+	 * The job each surface stood for WHEN THE SWAP WAS QUEUED. The surface's own maliSeq is
+	 * the last job that named it, and a later job that only READS the surface (a blur of the
+	 * screen behind a sheet) moves it on: waiting on the live field made the display wait for
+	 * work that had nothing to do with this frame, gave up after SWAP_GPU_MS and showed a
+	 * surface half drawn (test77: "the GPU is not done with surface 3 after 500 ms; shown as
+	 * it is", and the torn sheet in the picture).
+	 */
+	uint64_t        fSwapSeq[SWAP_QUEUE][SWAP_LAYERS];
 	unsigned        fSwapFirst, fSwapsWaiting;
 	/*
 	 * ... and not whenever the GPU happens to be done, but on a beat of the refresh rate
@@ -356,7 +366,7 @@ public:
 	void publishModes(void);
 	MiniIOSurface * defaultSurface(void);
 	void present(const uint8_t * swap);
-	void show(const uint8_t * swap, MiniIOSurface ** surfaces);
+	void show(const uint8_t * swap, MiniIOSurface ** surfaces, const uint64_t * seqs);
 	void presenter(void);
 	static void presenterMain(void * self, wait_result_t result);
 	void reportFrameTimes(void);
@@ -949,6 +959,7 @@ IOMobileFramebuffer::present(const uint8_t * swap)
 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
 
 		fSwapSurfaces[slot][layer] = sid != 0 ? MiniIOSurfaceCopy(sid) : NULL;
+		fSwapSeq[slot][layer] = fSwapSurfaces[slot][layer] != NULL ? fSwapSurfaces[slot][layer]->maliSeq : 0;
 	}
 	fSwapsWaiting++;
 	IOLockWakeup(fSwapLock, fSwap, true);
@@ -966,6 +977,7 @@ IOMobileFramebuffer::presenter(void)
 {
 	static uint8_t swap[SWAP_SIZE];         /* (one thread) */
 	MiniIOSurface * surfaces[SWAP_LAYERS];
+		uint64_t seqs[SWAP_LAYERS];
 
 	for (;;) {
 		IOLockLock(fSwapLock);
@@ -974,8 +986,9 @@ IOMobileFramebuffer::presenter(void)
 		}
 		memcpy(swap, fSwap[fSwapFirst], SWAP_SIZE);
 		memcpy(surfaces, fSwapSurfaces[fSwapFirst], sizeof(surfaces));
+		memcpy(seqs, fSwapSeq[fSwapFirst], sizeof(seqs));
 		IOLockUnlock(fSwapLock);
-		show(swap, surfaces);
+		show(swap, surfaces, seqs);
 		for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 			if (surfaces[layer] != NULL) {
 				MiniIOSurfaceDrop(surfaces[layer]);
@@ -987,7 +1000,7 @@ IOMobileFramebuffer::presenter(void)
 
 /* A swap's surfaces onto the panel, once the GPU is done with them. */
 void
-IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
+IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces, const uint64_t * seqs)
 {
 	uint32_t set = swapWord(swap, SWAP_LAYERS_SET);
 	uint64_t began = mach_absolute_time(), nanos, ready, shown, drawn;
@@ -996,9 +1009,13 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 	bool report;
 
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
-		if (surfaces[layer] != NULL && !MiniIOSurfaceDrawn(surfaces[layer], SWAP_GPU_MS)) {
-			IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u after %u ms; shown as it is\n",
-			    swapWord(swap, SWAP_ID), swapWord(swap, SWAP_SURFACE(layer)), SWAP_GPU_MS);
+		uint64_t seq = seqs != NULL ? seqs[layer] : 0;
+
+		if (surfaces[layer] != NULL && seq != 0 &&
+		    !redwood_mali_wait(seq, (uint64_t) SWAP_GPU_MS * NSEC_PER_MSEC)) {
+			IOLog("MiniIOMobileFramebuffer: swap %u: the GPU is not done with surface %u (job %llu) "
+			    "after %u ms; shown as it is\n", swapWord(swap, SWAP_ID),
+			    swapWord(swap, SWAP_SURFACE(layer)), seq, SWAP_GPU_MS);
 		}
 	}
 	fStatWaiting += mach_absolute_time() - began;
