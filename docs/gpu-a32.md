@@ -168,3 +168,25 @@ Metal driver is what draws it on the Infinix), and the GPU-side polish of the pa
 The fixes that made it work, from that port: `pan_kmod_bo_mmap` adds `bo_offset` (test52's
 0x40), cached BOs keep their CPU mapping (`panfrost-keepmap`), and the IOSurface import gets
 its size from the service (`pan_kmod.c`) with `osmesa_surface_resource` built for panfrost.
+
+## The BO cache and the tiler heap (test58)
+
+Two more patches from `y2sios`:
+
+- **retain**: idle BOs stay in the cache 30 s within a 64 MB budget (upstream drops them after
+  2 s), fewer allocations and kernel mappings for CoreAnimation's bursts of textures;
+- **lazy-heap**: the tiler heap is made at the first tiler job, 32 MB instead of the 128 MB
+  allocated when the device opens (`PAN_TILER_HEAP_MB` changes it).
+
+Run on the phone (test58), GL=1 gl=1, five minutes of apps, Control Center, notifications, blur:
+
+```
+one corpse: MobileSlideShow[46] (the Photos app)
+memory: free 96, files 998, programs 156, wired 517 (90 surfaces 39, ramfs 169) MB;
+        available 1095
+frames: 16-21 a second
+```
+
+**No backboardd respring**. The apps that crash (Health, Photos, Files) are user-land gaps of
+the port, not the window server. The BO counters can be printed with `PAN_MESA_DEBUG` when
+needed; the cache keeps at most 64 MB.
