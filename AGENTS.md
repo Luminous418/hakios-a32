@@ -26,7 +26,7 @@ not carry Qualcomm assumptions (UEFI, UFS, Adreno, SMMU, QMI) over to this phone
 | `docs/` | how each part was found, register by register | MIT |
 | `device.conf` | the phone and the state of each component | |
 
-How a boot goes: `mtkloader` is chained in front of Android's kernel in `boot_a`
+How a boot goes: `mtkloader` is chained in front of Android's kernel in `boot`
 (`tools/chainboot.py`). Android boots normally; `printf DARWIN-REDWOOD:BOOT-XNU > /dev/pmsg0`
 asks the loader for one XNU boot. The loader relocates itself and XNU to `0x40080000` (LK
 loads the image at a random address), brings up what XNU cannot (display kick, PMIC, clocks),
@@ -57,11 +57,12 @@ only first, each step's result said in the log.
 
 ## Working on the phone: safety
 
-- Flash **only `boot_a`**. Never write slot B (`boot_b`, `system_b`, ...) or any partition
-  other than `boot_a` and `xnusys`; `xnusys` is written only when the system image changes.
+- Flash **only `boot`**. The A32 is a **legacy non-A/B** device: the boot partition is
+  `boot` (not `boot_a`), and there is no slot B (`boot_b`, `system_b`, ... do not exist).
+  Write only `boot`, and `xnusys` only when the system image changes.
 - Always pass the serial (`adb -s`, `fastboot -s`); a second phone may be connected.
-- Keep the user's stock `boot_a` image; it is how the phone is restored. Magisk is not
-  needed after the first setup: the chainboot image is flashed over `boot_a`.
+- Keep the user's stock `boot` image; it is how the phone is restored. Magisk is not
+  needed after the first setup: the chainboot image is flashed over `boot`.
 - Runs are short (200–600 s) and one at a time. Do not raise CPU or GPU voltages.
 - The eMMC driver is read only by construction; keep it so unless the owner asks otherwise.
 - The touch screen's two rails are GPIO4 (1.8 V I/O) and PMIC VCAMA2 (3.0 V analog). The
@@ -74,7 +75,7 @@ What it needs:
   from the user's own IPSW;
 - clang, plus the zig `ld.lld` that the common tree provides;
 - `adb` and `fastboot`;
-- an SM-A325F with an unlocked bootloader and its stock `boot_a` saved.
+- an SM-A325F with an unlocked bootloader and its stock `boot` saved.
 
 ```sh
 export HAKIOS_SERIAL=...      # adb devices

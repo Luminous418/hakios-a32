@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build fbdiag.img: fbdiag in front of Android's kernel (rooted boot_a backup by default).
+# Build fbdiag.img: fbdiag in front of Android's kernel (rooted boot backup by default).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"

@@ -20,7 +20,7 @@ What this repository does **not** contain, and must never contain:
   (`XNU_SERIAL`, `HAKIOS0000000000`).
 
 Running it changes nothing permanent on the phone except what the user flashes themself: the
-loader goes into the `boot_a` partition in front of Android's own kernel, and the phone returns to
+loader goes into the `boot` partition in front of Android's own kernel, and the phone returns to
 Android after every run. Unlocking the bootloader, rooting and flashing are at the user's own risk.
 
 If you believe a file here infringes anyone's rights, open an issue and it will be removed.

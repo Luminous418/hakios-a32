@@ -4,7 +4,10 @@ HakiOS for the **Samsung Galaxy A32 4G (SM-A325F)**: MediaTek Helio G80 (**MT676
 **Mali-G52 MC2**, eMMC. iOS 16.5's own user space (launchd → backboardd → SpringBoard → apps)
 on Apple's open XNU kernel (xnu-8796.121.2), with this phone's own loader and drivers.
 
-Nothing on the phone is replaced for good: `mtkloader` sits in `boot_a` in front of Android's
+The A32 is a **legacy non-A/B** phone: its boot partition is `boot` (there is no `boot_a`
+and no slot B).
+
+Nothing on the phone is replaced for good: `mtkloader` sits in `boot` in front of Android's
 own kernel, starts XNU once when Android asks for it, and the phone comes back to Android
 after every run. The iOS system image lives in a partition of its own (`xnusys`, carved from
 the end of `userdata`) and the kernel reads it off the eMMC as it needs it.
@@ -45,7 +48,7 @@ else: the GPU stays powered and tested.
 ## What is here
 
 - `mtkloader/` — the bare-metal loader (MIT): chains in front of Android's kernel in
-  `boot_a`, relocates itself and XNU to `0x40080000`, reads the eMMC, builds XNU's device
+  `boot`, relocates itself and XNU to `0x40080000`, reads the eMMC, builds XNU's device
   tree and boot arguments, and brings Android back with XNU's log in `pstore`.
 - `kernel/` — this phone's drivers and changes in XNU (APSL 2.0, see `kernel/README.md`).
 - `tools/` — `chainboot.py` (pack a bare-metal program in front of Android's kernel) and
@@ -67,7 +70,7 @@ says it in full. Build outputs (`*.o`, `*.bin`, `*.img`, generated headers) are 
 
 What it needs:
 - a Galaxy A32 4G (SM-A325F) with an unlocked bootloader, Android 13 rooted (Magisk), and
-  its stock `boot_a` image saved;
+  its stock `boot` image saved;
 - a Mac with the common HakiOS tree (kernel build, user space, the iOS system image made
   from your own IPSW).
 
@@ -76,7 +79,7 @@ pieces:
 
 ```sh
 export HAKIOS_SERIAL=...                 # your phone, as `adb devices` shows it
-# build mtkloader and the kernel with the common tree, then pack boot_a:
+# build mtkloader and the kernel with the common tree, then pack boot:
 python3 tools/chainboot.py stock-boot.img mtkloader.bin boot-a32.img xnu-payload.bin
 ```
 
@@ -86,7 +89,7 @@ One run, with the A32 pieces enabled:
 cpus=4 fbscale=3 touchscreen=3 buttons=2 mali=1
 ```
 
-`boot_a` boots Android by default. To ask for one XNU run, from Android:
+`boot` boots Android by default. To ask for one XNU run, from Android:
 
 ```sh
 adb shell 'printf DARWIN-REDWOOD:BOOT-XNU > /dev/pmsg0'

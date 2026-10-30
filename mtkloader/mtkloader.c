@@ -38,7 +38,7 @@
 #ifndef SYSTEM_MAX_MB
 #define SYSTEM_MAX_MB       0
 #endif
-/* boot_args.virtBase, as xnuloader/loader.c has it: the kernel's text is 48 MB above it. */
+/* bootrgs.virtBase, as xnuloader/loader.c has it: the kernel's text is 48 MB above it. */
 #define KERNEL_VIRT_BASE    0xfffffff004000000ULL
 #define XNU_SLIDE           (XNU_PHYS_BASE - KERNEL_VIRT_BASE)
 #define PAGE_SIZE_MAX       0x4000ULL
@@ -167,7 +167,7 @@ struct boot_video {
 #define BOOT_LINE_LENGTH 608
 
 /* pexpert/pexpert/arm64/boot.h: virtBase comes first (start.s reads BA_VIRT_BASE, BA_PHYS_BASE). */
-struct boot_args {
+struct bootrgs {
 	uint16_t revision;
 	uint16_t version;
 	uint64_t virtBase;
@@ -183,12 +183,12 @@ struct boot_args {
 	uint64_t memSizeActual;
 };
 
-_Static_assert(__builtin_offsetof(struct boot_args, virtBase) == 8, "boot_args");
-_Static_assert(__builtin_offsetof(struct boot_args, physBase) == 16, "boot_args");
-_Static_assert(__builtin_offsetof(struct boot_args, video) == 40, "boot_args");
-_Static_assert(__builtin_offsetof(struct boot_args, deviceTreeP) == 96, "boot_args");
-_Static_assert(__builtin_offsetof(struct boot_args, commandLine) == 108, "boot_args");
-_Static_assert(__builtin_offsetof(struct boot_args, bootFlags) == 720, "boot_args");
+_Static_assert(__builtin_offsetof(struct bootrgs, virtBase) == 8, "bootrgs");
+_Static_assert(__builtin_offsetof(struct bootrgs, physBase) == 16, "bootrgs");
+_Static_assert(__builtin_offsetof(struct bootrgs, video) == 40, "bootrgs");
+_Static_assert(__builtin_offsetof(struct bootrgs, deviceTreeP) == 96, "bootrgs");
+_Static_assert(__builtin_offsetof(struct bootrgs, commandLine) == 108, "bootrgs");
+_Static_assert(__builtin_offsetof(struct bootrgs, bootFlags) == 720, "bootrgs");
 
 struct mach_header_64 {
 	uint32_t magic, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags, reserved;
@@ -257,7 +257,7 @@ struct dt_writer {
 extern char _start[];
 extern char chain_stub[], chain_stub_end[];
 extern char xnu_return_stub[];
-extern void jump_to_kernel(uint64_t entry_pa, uint64_t boot_args_pa);
+extern void jump_to_kernel(uint64_t entry_pa, uint64_t bootrgs_pa);
 extern void psci_system_reset(void);
 extern int64_t psci_cpu_on(uint64_t mpidr, uint64_t entry, uint64_t context);
 extern void watcher_entry(void);
@@ -2379,7 +2379,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	uint64_t ba_pa = (dt_pa + dt_len + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
 	uint64_t top = ba_pa + PAGE_SIZE_MAX;
 
-	struct boot_args *ba = (struct boot_args *)ba_pa;
+	struct bootrgs *ba = (struct bootrgs *)ba_pa;
 	memset(ba, 0, sizeof(*ba));
 	ba->revision = 2;
 	ba->version = 2;
@@ -2496,7 +2496,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 #if MSDC_TEST
 /*
  * Can we read the phone's eMMC with what LK left set up? Checked against bytes we know: the GPT
- * header at block 1 ("EFI PART") and the start of boot_a, which holds the image this very
+ * header at block 1 ("EFI PART") and the start of boot, which holds the image this very
  * program came from ("ANDROID!"). Reads only.
  */
 static void msdc_dump(const char *name, uint64_t lba, const uint8_t *b, int ok)
@@ -2582,7 +2582,7 @@ static void msdc1_probe(void)
 static void msdc_self_test(void)
 {
 	static uint8_t buf[4096] __attribute__((aligned(16)));
-	const uint64_t boot_a_lba = 1162448; /* SM-A325F: boot is mmcblk0p36, 65536 blocks */
+	const uint64_t boot_lba = 1162448; /* SM-A325F: boot is mmcblk0p36, 65536 blocks */
 	int ok;
 
 	/* a hang in here must not keep the phone: the watchdog brings Android back */
@@ -2625,12 +2625,12 @@ static void msdc_self_test(void)
 	msdc_dump("GPT header ", 1, buf, ok);
 
 	memset(buf, 0, sizeof(buf));
-	ok = msdc_read(boot_a_lba, 1, buf);
-	msdc_dump("boot_a     ", boot_a_lba, buf, ok);
+	ok = msdc_read(boot_lba, 1, buf);
+	msdc_dump("boot     ", boot_lba, buf, ok);
 
 	memset(buf, 0, sizeof(buf));
-	ok = msdc_read(boot_a_lba, 8, buf);
-	out("boot_a 8 blocks: ");
+	ok = msdc_read(boot_lba, 8, buf);
+	out("boot 8 blocks: ");
 	if (ok) {
 		uint32_t ksize = *(volatile uint32_t *)(buf + 8);
 		out(buf[0] == 'A' ? "ANDROID! kernel_size " : "NOT a boot image, ");
@@ -2648,7 +2648,7 @@ static void msdc_self_test(void)
 	}
 	out("\n");
 
-	/* How fast, how far, and is what comes back right: a checksum of 4 MB of boot_a, which
+	/* How fast, how far, and is what comes back right: a checksum of 4 MB of boot, which
 	 * is the image this program was flashed in, so the host can check it (tools/msdc-test.sh). */
 	for (uint32_t blocks = 256; blocks <= 8192; blocks *= 4) {
 		const uint64_t at = 0xa0000000ULL;
@@ -2659,7 +2659,7 @@ static void msdc_self_test(void)
 
 		t0 = dbg_ticks();
 		for (uint32_t r = 0; r < rounds && fine; r++) {
-			fine = msdc_read(boot_a_lba + (uint64_t)r * blocks, blocks, (void *)at);
+			fine = msdc_read(boot_lba + (uint64_t)r * blocks, blocks, (void *)at);
 			for (uint32_t i = 0; fine && i < blocks * 512 / 4; i++) {
 				sum = sum * 31u + *(volatile uint32_t *)(at + 4 * i);
 			}
