@@ -63,3 +63,35 @@ CoreAnimation acceleration is the client side: Mesa's panfrost needs a DRM shim
 (`libdrm`-like) that talks to this service, and the public `hakios-metal` driver is
 Adreno/PM4, not Mali. The realistic path remains Mesa panfrost plus CoreAnimation's
 OpenGL ES backend (the Infinix's `camtl=0` fallback).
+
+## The user-space test
+
+`tools/mali_job_test.c` opens the `RedwoodMali` service, asks for the GPU ID, makes a 4 KB
+buffer, maps it, writes the same "store `0xc0ffee01`" job the kernel's bring-up uses, submits
+it, waits and reads the word back. Its result goes to `kern.hakios.say`, which the kernel
+repeats in its log once a minute.
+
+Build it with the common tree's cross compiler and put it in the small image:
+
+```sh
+xnu-clang -arch arm64 -isysroot $THEOS/sdks/iPhoneOS16.5.sdk -O1 \
+    -framework IOKit -framework CoreFoundation -o mali_job_test tools/mali_job_test.c
+cd <common-tree>/userland
+FLASHBOOT=1 EXTRA=/path/to/mali_job_test RC_JOBS=rc.jobs.malitest ./build.sh
+```
+
+Then pack the payload with the new `root.apfs` and flash only `boot` (the small image travels
+there; `xnusys` is not touched). `tools/rc.jobs.malitest` is the job list.
+
+Run on the phone (test46), with Android back afterwards:
+
+```
+RedwoodMali: a client opened the GPU
+RedwoodMali: request 0x44, 16 bytes      (GET_PARAM)
+RedwoodMali: request 0x42, 24 bytes      (CREATE_BO)
+RedwoodMali: request 0x40, 40 bytes      (SUBMIT)
+mali_job_test: GPU 7402:1000, gpu address 0x1000000, job 1, wait 0, word c0ffee01 -- THE GPU RAN IT
+```
+
+So the whole path program → IOKit service → Mali works, with the same job the kernel's
+bring-up runs.

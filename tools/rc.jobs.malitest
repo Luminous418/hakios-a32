@@ -1,0 +1,3 @@
+# One-off: the Mali service job test (tools/mali_job_test.c), after the lock screen is up.
+/redwood/bin/rwtouch wait 14
+/redwood/bin/mali_job_test
