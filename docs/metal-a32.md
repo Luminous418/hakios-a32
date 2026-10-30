@@ -219,11 +219,29 @@ What is still wrong, measured:
 - **Widgets white, status bar glyphs clipped.** Their content comes from other processes;
   icons (decoded in-process) are correct.
 
+## A wallpaper of our own (test76)
+
+With no poster configured, the home screen is black. PosterBoard is the process that owns iOS
+16's wallpaper, and it is a LaunchAngel app started by RunningBoard on demand; none of that runs
+here. So SpringBoard draws one of ours, behind the icons by construction: a **CAGradientLayer**
+at the bottom of `SBHomeScreenViewController`'s and `SBLockScreenViewController`'s view layers
+(`inject_sb.c`, boot-arg `wallpaper=1`). The first attempt inserted a UIView at index 0 of every
+window's root view and covered the UI; a window is not the home screen, and its root view is above
+whatever the springboard draws. A layer on the home screen's own view is below every icon and
+overlay.
+
+On the phone: the blue gradient behind the icons and the dock, the labels and the search pill
+readable, and the lock screen has it too. `a wallpaper gradient behind N view(s)` in the log says
+which views were found. It is a placeholder, not Apple's poster (no video, no depth, no
+ProceduralWallpaper), but it is drawn by CoreAnimation on the Mali like everything else.
+
 ## What is next
 
-- A wallpaper at the window layer (a gradient below every window's content), which cannot
-  cover the UI.
-- The per-draw cost of panfrost's command submission, which is what sets the frame rate.
+- The per-draw cost of panfrost's command submission, which is what sets the frame rate
+  (10–26 fps; CA asks for ~100 draws a frame at 0.3–1.2 ms each).
+- The white widgets and the clipped status-bar glyphs: their content comes from other processes.
+- A real poster: PosterBoard, or a still image from the system's wallpaper assets, instead of the
+  gradient.
 - The runtime still calls the GPU "Mali-G77 MP11" in its name (`-name`, informative only); the
   compiler and the kernel side are this phone's G52.
 
