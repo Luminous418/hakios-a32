@@ -38,7 +38,7 @@
 #ifndef SYSTEM_MAX_MB
 #define SYSTEM_MAX_MB       0
 #endif
-/* bootrgs.virtBase, as xnuloader/loader.c has it: the kernel's text is 48 MB above it. */
+/* boot_args.virtBase, as xnuloader/loader.c has it: the kernel's text is 48 MB above it. */
 #define KERNEL_VIRT_BASE    0xfffffff004000000ULL
 #define XNU_SLIDE           (XNU_PHYS_BASE - KERNEL_VIRT_BASE)
 #define PAGE_SIZE_MAX       0x4000ULL
@@ -167,7 +167,7 @@ struct boot_video {
 #define BOOT_LINE_LENGTH 608
 
 /* pexpert/pexpert/arm64/boot.h: virtBase comes first (start.s reads BA_VIRT_BASE, BA_PHYS_BASE). */
-struct bootrgs {
+struct boot_args {
 	uint16_t revision;
 	uint16_t version;
 	uint64_t virtBase;
@@ -183,12 +183,12 @@ struct bootrgs {
 	uint64_t memSizeActual;
 };
 
-_Static_assert(__builtin_offsetof(struct bootrgs, virtBase) == 8, "bootrgs");
-_Static_assert(__builtin_offsetof(struct bootrgs, physBase) == 16, "bootrgs");
-_Static_assert(__builtin_offsetof(struct bootrgs, video) == 40, "bootrgs");
-_Static_assert(__builtin_offsetof(struct bootrgs, deviceTreeP) == 96, "bootrgs");
-_Static_assert(__builtin_offsetof(struct bootrgs, commandLine) == 108, "bootrgs");
-_Static_assert(__builtin_offsetof(struct bootrgs, bootFlags) == 720, "bootrgs");
+_Static_assert(__builtin_offsetof(struct boot_args, virtBase) == 8, "boot_args");
+_Static_assert(__builtin_offsetof(struct boot_args, physBase) == 16, "boot_args");
+_Static_assert(__builtin_offsetof(struct boot_args, video) == 40, "boot_args");
+_Static_assert(__builtin_offsetof(struct boot_args, deviceTreeP) == 96, "boot_args");
+_Static_assert(__builtin_offsetof(struct boot_args, commandLine) == 108, "boot_args");
+_Static_assert(__builtin_offsetof(struct boot_args, bootFlags) == 720, "boot_args");
 
 struct mach_header_64 {
 	uint32_t magic, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags, reserved;
@@ -257,7 +257,7 @@ struct dt_writer {
 extern char _start[];
 extern char chain_stub[], chain_stub_end[];
 extern char xnu_return_stub[];
-extern void jump_to_kernel(uint64_t entry_pa, uint64_t bootrgs_pa);
+extern void jump_to_kernel(uint64_t entry_pa, uint64_t boot_args_pa);
 extern void psci_system_reset(void);
 extern int64_t psci_cpu_on(uint64_t mpidr, uint64_t entry, uint64_t context);
 extern void watcher_entry(void);
@@ -2379,7 +2379,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	uint64_t ba_pa = (dt_pa + dt_len + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
 	uint64_t top = ba_pa + PAGE_SIZE_MAX;
 
-	struct bootrgs *ba = (struct bootrgs *)ba_pa;
+	struct boot_args *ba = (struct boot_args *)ba_pa;
 	memset(ba, 0, sizeof(*ba));
 	ba->revision = 2;
 	ba->version = 2;
