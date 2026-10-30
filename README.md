@@ -19,7 +19,7 @@ the end of `userdata`) and the kernel reads it off the eMMC as it needs it.
 | touch | works | STM FTS5CU56A on I2C6 at 0x49, bit-banged on GPIO89/90 (`kernel/bsd/dev/hakios.fts.c`); its two rails (GPIO4 and PMIC VCAMA2) are switched on from the kernel |
 | buttons | works | power and volume up/down (`kernel/bsd/dev/hakios.mtkkeys.c`) |
 | GPU | hardware works | Mali-G52 r1p0 brought up from the kernel (clocks, SPM domains, reset, L2/tiler/shaders, two real jobs: `mali=1`); CoreAnimation still draws in software, see below |
-| CPU | works | 4 cores; `mtk_cpufreq=1` confirms the boot loader's 1175 MHz / 0.8 V, the raise to 2.0 + 1.7 GHz is the next test (`kernel/bsd/dev/hakios.mtkcpufreq.c`) |
+| CPU | works | 4 cores; A75 at 1999 MHz and A55 at 1699 MHz with `mtk_cpufreq=3` (`kernel/bsd/dev/hakios.mtkcpufreq.c`) |
 | battery | missing | |
 | sensors, Wi-Fi / Bluetooth, audio, camera, cellular | missing | |
 

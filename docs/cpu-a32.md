@@ -49,3 +49,17 @@ cpufreq: A55s at 1174 MHz (CON1 0x8116989d), Vproc step 48 (800 mV), VSRAM step 
 
 That is exactly what the guard expects (1175 MHz, post divider 1, Vproc 0.8 V), so the raise
 may proceed. The read-only run is the check before any voltage is written.
+
+## After the raise (measured)
+
+`mtk_cpufreq=3`, run on the phone (test37):
+
+```
+cpufreq: A75s now at 1999 MHz (CON1 0x133b13), Vproc step 96 (1100 mV), VSRAM step 99 (1118 mV)
+cpufreq: A55s at 1699 MHz (CON1 0x120b13b), Vproc step 76 (975 mV), VSRAM step 92 (1075 mV)
+```
+
+The code asks for steps 94 and 74 and adds two steps of margin (12.5 mV), hence 1100 mV and
+975 mV; both stay under the 1.11875 V ceiling (`VOLT_STEP_MAX` 99). The A75s are 70% faster
+and the A55s 45% faster than the boot loader's 1175 MHz, and the difference is visible in the
+UI animations.
