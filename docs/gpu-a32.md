@@ -106,3 +106,20 @@ that makes `glReadPixels` fail, now in CoreAnimation's path.
 
 So the stable image stays the one without GL (`xnu-a32-emmc-test41-stability.img`): display,
 touch, buttons, CPU, battery and the Mali service, with CoreAnimation drawn by the processor.
+
+## The job dump (test52)
+
+The service was given a dump of the first four submissions (32 words each). The draw's jobs are
+valid job headers:
+
+```
+job 1 at 0x90a0300: ... 00010015 ...   (vertex/tiler, runs)
+job 2 at 0x90a0340: ... 00010013 ...   (fragment, runs)
+job 3 at 0x90a0340: 3f800000 00000000 090a04c0 ...   (the blit: the draw's DATA, not a header)
+```
+
+The blit's `jc` points 0x40 into the pool, at the previous job's data, so the GPU rejects it
+with `JS_STATUS 0x58 DATA_INVALID_FAULT`. The service receives the address from Mesa; the
+suspect is how panfrost 25 computes/reuses the job-pool address (a 0x40 offset), not the GPU or
+the ioctls. The next comparison would be with the Infinix's working Mesa/panfrost, which is not
+published.
