@@ -95,3 +95,14 @@ mali_job_test: GPU 7402:1000, gpu address 0x1000000, job 1, wait 0, word c0ffee0
 
 So the whole path program → IOKit service → Mali works, with the same job the kernel's
 bring-up runs.
+
+## CoreAnimation with GL=1 (test51)
+
+The image built with `GL=1` and booted with `mali=1 gl=1` loads `libhakios.gl.dylib` and Mesa
+panfrost into backboardd, and the service sees the screen and buffer requests. But backboardd
+crashes (`Corpse allowed` at 206 s and again at 218 s), so the window server never draws and the
+panel keeps the loader's last frame ("Jumping to XNU"). It is the same panfrost job/blit fault
+that makes `glReadPixels` fail, now in CoreAnimation's path.
+
+So the stable image stays the one without GL (`xnu-a32-emmc-test41-stability.img`): display,
+touch, buttons, CPU, battery and the Mali service, with CoreAnimation drawn by the processor.
