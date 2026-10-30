@@ -50,6 +50,7 @@ void hakios_ufs_report(const char *when); /* where reading the storage has spent
 bool hakios_ufs_dev(dev_t dev);           /* one of the storage's devices */
 int hakios_ufs_read_partition(const char *name, uint64_t offset, uint8_t *dst, uint64_t len, uint64_t *bytes); /* for drivers */
 void hakios_battery_init(void);        /* boot-arg battery=1: Qualcomm UEFI charger state shared by xnuloader */
+void hakios_mtkbattery_init(void);     /* boot-arg battery=2: the A32's MT6358 BATADC and CHRDET */
 int hakios_battery_temperature(void);  /* the battery's temperature in C, -273 while it is not known */
 /* one transfer at a time through the PMIC arbiter for this system (bsd/dev/hakios.buttons.c) */
 void hakios_spmi_lock(void);

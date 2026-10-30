@@ -20,7 +20,7 @@ the end of `userdata`) and the kernel reads it off the eMMC as it needs it.
 | buttons | works | power and volume up/down (`kernel/bsd/dev/hakios.mtkkeys.c`) |
 | GPU | hardware works | Mali-G52 r1p0 brought up from the kernel (clocks, SPM domains, reset, L2/tiler/shaders, two real jobs: `mali=1`); CoreAnimation still draws in software, see below |
 | CPU | works | 4 cores; A75 at 1999 MHz and A55 at 1699 MHz with `mtk_cpufreq=3` (`kernel/bsd/dev/hakios.mtkcpufreq.c`) |
-| battery | missing | |
+| battery | works | MT6358 `BATADC` (voltage, 3:1 divider) and `CHRDET`, `battery=2`; temperature and current are still placeholders |
 | sensors, Wi-Fi / Bluetooth, audio, camera, cellular | missing | |
 
 ### GPU: what is and what is not
