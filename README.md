@@ -21,7 +21,7 @@ the end of `userdata`) and the kernel reads it off the eMMC as it needs it.
 | display | works | 1080×2400 command-mode DSI, iOS at scale 3; the loader's watcher kicks the panel and checks DSI busy (`kernel/iokit/Kernel/MiniIOMobileFramebuffer.cpp`, `mtk_kick=0`) |
 | touch | works | STM FTS5CU56A on I2C6 at 0x49, bit-banged on GPIO89/90 (`kernel/bsd/dev/hakios.fts.c`); its two rails (GPIO4 and PMIC VCAMA2) are switched on from the kernel |
 | buttons | works | power and volume up/down (`kernel/bsd/dev/hakios.mtkkeys.c`) |
-| GPU | hardware works | Mali-G52 r1p0 brought up from the kernel (clocks, SPM domains, reset, L2/tiler/shaders, two real jobs: `mali=1`); CoreAnimation still draws in software, see below |
+| GPU | partial | Mali-G52 r1p0 brought up (step 6/6: two real jobs) and the panfrost service `RedwoodMali` running (`mali=1`, `kernel/iokit/Kernel/hakios.mali.cpp`); CoreAnimation still draws in software, see below |
 | CPU | works | 4 cores; A75 at 1999 MHz and A55 at 1699 MHz with `mtk_cpufreq=3` (`kernel/bsd/dev/hakios.mtkcpufreq.c`); a ten-minute run stayed there (`docs/stability-a32.md`) |
 | battery | works | MT6358 `BATADC` (voltage, 3:1 divider) and `CHRDET`, `battery=2`; temperature and current are still placeholders |
 | sensors | partial | the SCP sensor hub runs and the accelerometer streams (`scp_step=6`, `kernel/bsd/dev/hakios.scp.c`); turning the samples into screen rotation is still user-space work |

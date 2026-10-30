@@ -36,8 +36,9 @@ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern uint64_t kvtophys(vm_offset_t va);
 extern void FlushPoC_DcacheRegion(vm_offset_t va, size_t length);
 extern vm_offset_t phystokv(uint64_t pa);
-static uint32_t gMaliClients, gMaliBuffers, gMaliSubmits, gMaliFailed, gMaliShown;
-static struct mali_made { uint64_t address, size; uint32_t asked, flags; } gMaliMade[32];
+extern void RedwoodMaliStart(void);
+extern uint32_t gMaliClients, gMaliBuffers, gMaliSubmits, gMaliFailed, gMaliShown;   /* iokit/Kernel/hakios.mali.cpp */
+extern struct mali_made { uint64_t address, size; uint32_t asked, flags; } gMaliMade[32];
 
 #define TOPCKGEN_PHYS   0x10000000
 #define INFRACFG_PHYS   0x10001000
@@ -1021,6 +1022,9 @@ mali_thread(__unused void *parameter, __unused wait_result_t result)
 {
 	mali_up();
 	printf("mali: came up to step %u of 6\n", reached);
+	if (reached >= 6) {
+		RedwoodMaliStart();             /* programs can have it now (iokit/Kernel/hakios.mali.cpp) */
+	}
 	if (reached >= 6) {
 	}
 	for (;;) {

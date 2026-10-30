@@ -43,6 +43,23 @@ CoreAnimation still draws in software because the layer above the hardware is no
 - **Metal for Mali** — the public `hakios-metal` driver is Adreno/PM4; the Infinix's
   AIR→NIR→panfrost Metal driver is not published.
 
-The realistic path is Mesa's panfrost plus CoreAnimation's OpenGL ES backend (the Infinix's
-`camtl=0` fallback), not the Metal driver. Until then, `mali=1` changes nothing for iOS: the
-GPU is powered and proven, and the home screen keeps its software animation.
+## The panfrost service (test45)
+
+`kernel/iokit/Kernel/hakios.mali.cpp` is the Infinix's `RedwoodMali.cpp` ported: an IOKit
+service that speaks Linux's panfrost DRM interface (parameters, buffers, GPU addresses,
+job chains, waits) and hands surfaces to/from MiniIOSurface. `MiniIOSurface` gained a
+`maliSeq` and `MiniIOSurfaceDrawn()` waits on it, so the display never shows a surface the
+Mali is still drawing.
+
+With `mali=1` the kernel brings the GPU up and then starts it (test45):
+
+```
+mali: came up to step 6 of 6
+RedwoodMali: the GPU is there for programs to draw with
+```
+
+So the path program → IOKit service → Mali is in place. What is still missing for
+CoreAnimation acceleration is the client side: Mesa's panfrost needs a DRM shim
+(`libdrm`-like) that talks to this service, and the public `hakios-metal` driver is
+Adreno/PM4, not Mali. The realistic path remains Mesa panfrost plus CoreAnimation's
+OpenGL ES backend (the Infinix's `camtl=0` fallback).
