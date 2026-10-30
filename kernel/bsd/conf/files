@@ -117,6 +117,7 @@ bsd/dev/hakios.fts.c		standard
 bsd/dev/hakios.buttons.c	standard
 bsd/dev/hakios.mtkkeys.c	standard
 bsd/dev/hakios.mtkcpufreq.c	standard
+bsd/dev/hakios.scp.c		standard
 bsd/dev/hakios.battery.c	standard
 bsd/dev/hakios.mtkbattery.c	standard
 bsd/dev/hakios.ufs.c	standard

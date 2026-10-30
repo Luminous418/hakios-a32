@@ -221,6 +221,7 @@ hakios_input_init(void)
 	hakios_buttons_init();
 	hakios_mtkkeys_init();
 	hakios_mtkcpufreq_init();
+	hakios_scp_init();
 	hakios_battery_init();
 	hakios_mtkbattery_init();
 	hakios_ufs_init();

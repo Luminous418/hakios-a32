@@ -11,6 +11,7 @@ into XNU.
 | `bsd/dev/hakios.mali.c` | new | the Mali-G52 MC2 brought up from the kernel (topckgen mux, SPM power domains, mfgcfg clock gate, reset, L2/tiler/shaders, two job tests) (`mali=1`); ported from the Infinix Hot 20's driver |
 | `bsd/dev/hakios.mtkcpufreq.c` | new | the two CPU clusters: ARMPLL2/ARMPLL1 and the MT6358's Vproc11/Vproc12, `mtk_cpufreq=1` read only, `=2` the A75s to 2000 MHz, `=3` the A55s to 1700 MHz too |
 | `bsd/dev/hakios.mtkbattery.c` | new | the battery: MT6358 AUXADC channel 0 (`RQST0` bit 0, `ADC0`, 3:1 divider) for the voltage and `TOPSTATUS` bit 2 for the charger, reported to `hakios_battery_report()` (`battery=2`) |
+| `bsd/dev/hakios.scp.c` | new | the SCP (`tinysys`) sensor hub: reads its state, starts it if LK left it in reset, takes its IPI messages, enables the accelerometer through nanohub and reads the DRAM FIFO (`scp_step=N`, ported from the Infinix Hot 20) |
 | `bsd/dev/hakios.input.c` | changed | calls `hakios_fts_init()`, `hakios_mtkkeys_init()` and `hakios_mali_init()` from `hakios_input_init()` |
 | `bsd/sys/hakios.input.h` | changed | prototypes for the three |
 | `bsd/dev/hakios.goodix.c` | changed | only `touchscreen=1` starts the Goodix/FocalTech driver; `touchscreen=3` is this phone's STM |
@@ -26,6 +27,7 @@ touchscreen=3          the STM FTS on I2C6
 buttons=2              the A32's keypad and PMIC keys
 mali=1                 bring the Mali up and run its two test jobs
 battery=2              the A32's MT6358 battery ADC and charger detect
+scp_step=N             the SCP sensor hub: 1 reads, up to 6 enables and reads the accelerometer
 cpus=4                 four cores; six ended in fastboot
 fbscale=3              iOS at scale 3 on the 1080x2400 panel
 touch_swap=1, touch_flip_x=1, touch_flip_y=1   if the touch axes need turning
