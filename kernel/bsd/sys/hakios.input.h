@@ -44,6 +44,7 @@ void hakios_goodix_init(void);         /* boot-arg touchscreen=1: the phone's Go
 void hakios_fts_init(void);            /* boot-arg touchscreen=3: the A32's STM FTS5CU56A on I2C6 */
 void hakios_buttons_init(void);        /* boot-arg buttons=1: the phone's power and volume keys */
 void hakios_mtkkeys_init(void);        /* boot-arg buttons=2: the A32's keypad and MT6358 power key */
+void hakios_mtkcpufreq_init(void);     /* boot-arg mtk_cpufreq=N: the A32's two CPU clusters */
 void hakios_ufs_init(void);           /* ufs=2 to xnuloader: the phone's storage, read only, through the loader (ufs_shared_pa=) */
 void hakios_ufs_report(const char *when); /* where reading the storage has spent its time so far */
 bool hakios_ufs_dev(dev_t dev);           /* one of the storage's devices */

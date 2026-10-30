@@ -220,6 +220,7 @@ hakios_input_init(void)
 	hakios_fts_init();
 	hakios_buttons_init();
 	hakios_mtkkeys_init();
+	hakios_mtkcpufreq_init();
 	hakios_battery_init();
 	hakios_ufs_init();
 	hakios_net_init();
