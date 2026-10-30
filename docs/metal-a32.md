@@ -181,10 +181,49 @@ Open for later: the clear action of an integer attachment packs the float 1.0 as
 instead of the word 1 (a clear-only pass reads `1065353216`), which matters only to integer
 render targets; floats — what CoreAnimation draws — are unaffected.
 
+## CoreAnimation on Metal (test75)
+
+`metal=1 metal_plugin=1` (a boot-arg that publishes `MetalPluginName` and
+`MetalPluginClassName` on `IOAcceleratorES` **at registration**, before launchd exists) is what
+makes backboardd, SpringBoard and QuartzCore find the driver on their first device request,
+instead of the userland switch a test process uses.
+
+What was in the way, in order, each measured on the phone:
+
+1. **QuartzCore's own Metal library.** CA asserts `metallib_url != nil` (`ogl-metal.mm:3308`)
+   because `select-system.py` drops every `.metallib` (`SKIP_EXT`) and the framework's
+   `default.metallib` is one of them. The file (1 MB, from the 20F66 IPSW) travels in this
+   image and is shown over `QuartzCore.framework` with a **union bind** (`src/init.c`).
+   Its `default.pipelinelib/pipelines.<device>` is still missing, and CA logs
+   `Metal failed to load pipeline library: Could not open pipeline cache file ...` and carries
+   on, exactly as the runtime's `-targetDeviceInfo` answer was designed for.
+2. **Siri's orb.** The first SpringBoard abort after that was `_MTLReportFailure <-
+   MPSGetImageType <- MPSImage <- -[SUICOrbView _updateMetalTextureRasterSize:] <-
+   -[SBAssistantController _init] <- ... <- applicationDidFinishLaunching`: MPS refuses the
+   orb's image on this driver. Siri is outside this port, so SpringBoard's
+   `+[SBAssistantController sharedInstance]` is answered `nil` (`inject_sb.c`); the assistant
+   is not started and the rest of SpringBoard does not need the singleton to be an object.
+
+The result: SpringBoard finishes launching and **CoreAnimation draws the home screen through
+Metal** — icons, labels, the dock, the search pill, page transitions — with **no crash and no
+respring** in the 150 s run. The runtime's counters: ~50 command buffers a second, ~550 draws
+in 5 s, commit 0.6 ms, GPU wait 4–10 ms, 0 refused pipelines, 0 surface copies.
+
+What is still wrong, measured:
+
+- **10–26 frames a second.** The draws are the cost on the processor: ~100 CA draws a frame at
+  0.3–1.2 ms of Gallium each, so a swipe runs at ~26 fps (the GL renderer was 16–21).
+- **No wallpaper.** It is not drawn at all: no poster/wallpaper process appears in the log
+  (`PosterBoard` is a LaunchAngel app, `RunAtLoad=false`, started by RunningBoard on demand),
+  and SpringBoard shows black behind the icons.
+- **Widgets white, status bar glyphs clipped.** Their content comes from other processes;
+  icons (decoded in-process) are correct.
+
 ## What is next
 
-- `--picture`: the same render path at the panel's size, put on the panel.
-- CoreAnimation on Metal: the properties on before backboardd starts, then the wallpaper.
+- A wallpaper at the window layer (a gradient below every window's content), which cannot
+  cover the UI.
+- The per-draw cost of panfrost's command submission, which is what sets the frame rate.
 - The runtime still calls the GPU "Mali-G77 MP11" in its name (`-name`, informative only); the
   compiler and the kernel side are this phone's G52.
 

@@ -576,7 +576,11 @@ RedwoodMaliUserClient::submit(struct drm_panfrost_submit * request, size_t size)
 			continue;
 		}
 		mb = OSDynamicCast(IOBufferMemoryDescriptor, wb->memory);
-		if (mb != NULL && mb->getBytesNoCopy() != NULL) {
+		if (mb != NULL && mb->getBytesNoCopy() != NULL && wb->size <= (1ull << 20)) {
+			/* Small buffers are the program's (uniforms, vertices, indices, a command
+			 * stream). The big ones a job names are the driver's pools and the tiler
+			 * heap: memory written and read on the GPU side, where a clean of 33 MB a
+			 * submit costs more than it can ever fix. */
 			redwood_mali_to_memory(mb->getBytesNoCopy(), wb->size);
 			cleaned++;
 			cleanedBytes += wb->size;

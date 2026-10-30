@@ -1,0 +1,15 @@
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalpicture).
+#
+# The render path at the panel's own size (1080x2400), twelve seconds of it, put on the panel:
+# the same device, libraries and compiler as rc.jobs.metaldraw, with targets of the screen's
+# size instead of 4x4. It says whether the path scales to a full frame and whether the pixels
+# reach the display through the runtime's show call (RedwoodMali 0x7f), which is the last step
+# before CoreAnimation itself can use Metal.
+#
+# The watcher returns the phone to Android 90 s after boot; the test starts at 40 s and paints
+# for 12.
+/redwood/bin/rwtouch wait 40
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_props on
+/redwood/bin/say_run /redwood/bin/metal_drv_test --picture 12 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/say_run /redwood/bin/metal_props off

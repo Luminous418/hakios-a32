@@ -1636,8 +1636,22 @@ publishAccelerator(IOService * provider)
 		accelerator->setName("sgx");
 		accelerator->registerService();
 		if (gAcceleratorTakesProperties) {
+			uint32_t plugin = 0;
+
 			IOLog("IOAcceleratorES: metal=%u: this service takes " kAcceleratorPluginNameKey
 			    " and " kAcceleratorPluginClassNameKey " from user space\n", metal);
+			/*
+			 * metal_plugin=1: the two properties are set HERE, before launchd exists, so that
+			 * backboardd and SpringBoard find the driver when they build their renderers. The
+			 * userland switch (metal_props) is for a boot where only one process is meant to
+			 * take the Metal road; this one is for CoreAnimation itself, which asks once, early.
+			 */
+			if (PE_parse_boot_argn("metal_plugin", &plugin, sizeof(plugin)) && plugin != 0) {
+				accelerator->setProperty(kAcceleratorPluginNameKey, "RedwoodMetal");
+				accelerator->setProperty(kAcceleratorPluginClassNameKey, "RedwoodMetalDevice");
+				IOLog("IOAcceleratorES: metal_plugin=%u: MetalPluginName = RedwoodMetal, "
+				    "MetalPluginClassName = RedwoodMetalDevice, published at start\n", plugin);
+			}
 		}
 	}
 	OSSafeReleaseNULL(accelerator);
