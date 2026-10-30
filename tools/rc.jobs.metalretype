@@ -1,0 +1,12 @@
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalretype).
+#
+# The draw with the fragment output's signedness report on stderr (RWA_DEBUG_RETYPE): for every
+# shader output, the attachment's Metal format, the Gallium format's purity, the output's base
+# type, and whether retype_integer_outputs changed it. clearFragment20's four words are all
+# >= 2^31 (negative ints); if the output stays int on a uint target a Mali blend unit saturates
+# them to 0, which is the pixel every GPU run has produced.
+/redwood/bin/rwtouch wait 40
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_props on
+/redwood/bin/say_run /redwood/bin/metal_drv_test --env RWA_DEBUG_RETYPE=1 --draw --fragment clearFragment20 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/say_run /redwood/bin/metal_props off

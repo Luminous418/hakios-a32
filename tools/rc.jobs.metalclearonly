@@ -1,0 +1,18 @@
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalclearonly).
+#
+# One draw, three answers in the same boot:
+#
+#   1. a pass that only clears, read back before anything is drawn -- 1 means the clear action
+#      reaches attachment 2 (RGBA32Uint), 0 means the render target's write path does not;
+#   2. RWA_PRINT_NIR=1, the NIR of the fragment stage as it is handed to the driver, which says
+#      whether clearFragment20's store is uint (bits kept) or int (which a Mali blend unit
+#      writing a uint attachment saturates to 0);
+#   3. the draw itself, and the pixel it leaves.
+#
+# v11's clear-to-1 read back 0 after the draw, which could be a shader writing zeros over it or
+# a clear that never happened; 1 and 2 tell them apart.
+/redwood/bin/rwtouch wait 40
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_props on
+/redwood/bin/say_run /redwood/bin/metal_drv_test --env RWA_PRINT_NIR=1 --draw --fragment clearFragment20 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/say_run /redwood/bin/metal_props off

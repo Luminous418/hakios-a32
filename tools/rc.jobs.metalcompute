@@ -1,0 +1,23 @@
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalcompute).
+#
+# The first dispatch through Metal on this GPU. metal_props opens the two discovery properties,
+# so MTLCreateSystemDefaultDevice() returns RedwoodMetalDevice (the sweep of test60 settled
+# that), and metal_drv_test then:
+#
+#   - reads a system .metallib and asks the driver to compile a function from it, which is
+#     libredwoodair's AIR front end feeding panfrost's Bifrost compiler;
+#   - makes the buffers the kernel binds and dispatches it on the GPU;
+#   - reads the buffer back and says whether the dispatch happened at all.
+#
+# MetalFaceMask_InitMinMax is the first one y2sios tried for the same reason: exactly one device
+# buffer (24 bytes, read_write, atomicMinMax), no textures and no samplers, and it writes its
+# buffer unconditionally -- so an all-zero result means the dispatch did not happen rather than
+# that the kernel had nothing to say.
+#
+# say_run puts every line in the kernel log (a job's stdout is kept nowhere); if the test dies,
+# the line after it still turns the properties off.
+/redwood/bin/rwtouch wait 40
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_props on
+/redwood/bin/say_run /redwood/bin/metal_drv_test /System/Library/CoreImage/PortraitFilters.cifilter/default.metallib MetalFaceMask_InitMinMax
+/redwood/bin/say_run /redwood/bin/metal_props off

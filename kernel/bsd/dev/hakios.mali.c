@@ -76,6 +76,31 @@ static uint32_t kept_next;
 static LCK_GRP_DECLARE(kept_lock_group, "redwood-said");
 static LCK_MTX_DECLARE(kept_lock, &kept_lock_group);
 
+/*
+ * What the processor wrote, visible to the GPU: the cache lines over `size` bytes at `start`
+ * are cleaned to the point of coherency and a barrier follows. A Metal buffer is written by
+ * the program through a mapping with no cache of the GPU's between it and memory, but on this
+ * processor that mapping can be cached: clearFragment20's constant buffer reached the shader
+ * as zeros until its 256 bytes were cleaned here (test62). NULL: the barrier alone.
+ */
+void redwood_mali_to_memory(const void *start, uint64_t size);
+void
+redwood_mali_to_memory(const void *start, uint64_t size)
+{
+	uint64_t at, end;
+
+	if (start == NULL) {
+		__asm__ volatile ("dsb sy" ::: "memory");
+		return;
+	}
+	at = (uint64_t)(uintptr_t)start & ~63ull;
+	end = (uint64_t)(uintptr_t)start + size;
+	for (; at < end; at += 64) {
+		__asm__ volatile ("dc civac, %0" :: "r"(at) : "memory");
+	}
+	__asm__ volatile ("dsb sy" ::: "memory");
+}
+
 /* A line from the kernel itself, kept and said again every minute as kern.redwood.say's "!" ones are. */
 void redwood_keep(const char *format, ...) __printflike(1, 2);
 void

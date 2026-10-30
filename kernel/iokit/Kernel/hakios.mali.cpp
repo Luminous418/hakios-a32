@@ -40,6 +40,7 @@ uint64_t redwood_mali_address(uint64_t size);
 bool redwood_mali_map(uint64_t gpu, uint64_t phys);
 void redwood_mali_mapped(void);
 void redwood_mali_unmap(uint64_t gpu, uint64_t size);
+void redwood_mali_to_memory(const void *start, uint64_t size);
 void redwood_mali_tag(uint64_t address, uint32_t kind, uint32_t width, uint32_t height, uint32_t row_bytes,
     uint32_t format, uint32_t offset);
 uint32_t redwood_mali_submit(uint64_t chain, bool fragment);
@@ -558,6 +559,34 @@ RedwoodMaliUserClient::submit(struct drm_panfrost_submit * request, size_t size)
 			break;
 		}
 	}
+	/*
+	 * What the program wrote through its own mapping, to memory where the GPU reads it: a
+	 * Metal buffer's contents are the program's writes and nothing else, and this is the
+	 * only point that knows which buffers a job will read. The IOSurfaces of the display are
+	 * separate memory and are not cleaned here.
+	 */
+	uint32_t cleaned = 0;
+	uint64_t cleanedBytes = 0;
+
+	for (uint32_t i = 0; i < count; i++) {
+		struct mali_buffer *wb = buffer(handles[i]);
+		IOBufferMemoryDescriptor *mb;
+
+		if (wb == NULL) {
+			continue;
+		}
+		mb = OSDynamicCast(IOBufferMemoryDescriptor, wb->memory);
+		if (mb != NULL && mb->getBytesNoCopy() != NULL) {
+			redwood_mali_to_memory(mb->getBytesNoCopy(), wb->size);
+			cleaned++;
+			cleanedBytes += wb->size;
+		}
+	}
+	redwood_mali_to_memory(NULL, 0);
+	if (fSubmits <= 4) {
+		IOLog("RedwoodMali: submit %u: %u handles, %u buffers cleaned (%llu bytes)\n", fSubmits + 1,
+		    count, cleaned, cleanedBytes);
+	}
 	seq = redwood_mali_enqueue(request->jc, request->requirements & PANFROST_JD_REQ_FS);
 	if (seq != 0) {
 		for (uint32_t i = 0; i < count; i++) {
@@ -706,7 +735,13 @@ RedwoodMaliUserClient::clientMemoryForType(UInt32 type, IOOptionBits * options, 
 	if (b != NULL) {
 		b->memory->retain();
 		*memory = b->memory;
-		*options = 0;
+		/*
+		 * A buffer the program writes (a Metal buffer, a command buffer) is mapped write
+		 * combined: its writes reach memory where the GPU and the driver's own reads of it
+		 * find them. The pixels of an IOSurface are memory outside XNU's and keep the
+		 * mapping they had (the display's).
+		 */
+		*options = b->surface != NULL ? 0 : kIOMapInhibitCache;
 		ret = kIOReturnSuccess;
 	}
 	IOLockUnlock(gMaliLock);

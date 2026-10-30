@@ -133,10 +133,58 @@ jobs, 0 unfinished; memory was 1.2 GB available and no job faulted). The same Gl
 resprung before, so it may not be Metal's; a control boot with the same kernel and `metal=1`
 but no properties set is the next measurement before drawing.
 
+## The first triangle through Metal (test72)
+
+`rc.jobs.metaldraw` draws four vertices as a strip with the generated vertex stage and
+`clearFragment20` from `AppleMetalGLRenderer.bundle/default.metallib`, into three 4×4
+`RGBA32Uint` attachments, and compares the first pixel of attachment 2 against the four words
+softpipe produced for the same shader (2458616957 2930221209 3401825461 3873429713).
+
+The run:
+
+```
+drvtest: newRenderPipelineStateWithDescriptor: gave RedwoodMetalRenderPipeline
+drvtest: draw: commandBuffer RedwoodMetalCommandBuffer, computeCommandEncoder ...
+drvtest: draw: status 4
+drvtest: draw: attachment 2 at (3, 3) = ...
+drvtest: draw: the pixel at (0, 0) of attachment 2 is 2458616957 2930221209 3401825461 3873429713
+drvtest: draw: THE SAME -- a Metal fragment shader drew on the Adreno
+RedwoodMali: a client goes after 3 job chains, 0 of them unfinished
+mali: step 6 of 6 ... 19 job chains (0 failed)
+```
+
+(The verdict string says "Adreno" because it comes from the `y2sios` port; the GPU is the G52.)
+No GPU fault, no respring, and the same boot's window server kept drawing with GL.
+
+Getting there took two fixes in the AIR front end (`tools/mesa/air-integer-ubo.patch`, the two
+hunks against `y2sios`'s `air_metal.c`), both found by measurement rather than guessed:
+
+- **signed integer outputs.** `clearFragment20` writes four words ≥ 2^31, which as `int` are
+  negative; the target is `uint`. `retype_integer_outputs` changed the output *variable* to
+  `uvec4`, but `nir_lower_io` takes the store's source type from the **dereference**, which was
+  still typed `ivec4`, so Bifrost's blend unit saturated every word to 0. The pass now retypes
+  the variable's dereferences as well; the NIR says `uvec4` and `src_type=uint32`, and the bits
+  land untouched.
+- **constant buffers.** The shader does not write a constant: it stores what it loads from UBO 14
+  at offset 16. On the GPU every word read 0, on softpipe the same code read the right bytes.
+  A Metal buffer is written by the program through its own mapping; the ARM cores here are not
+  coherent with the device, and a clean from the core that submits does not clean the writer's.
+  UBOs of 4 KB or less are now bound as **user buffers**, so Panfrost copies them on the
+  processor into the batch pool — the memory every descriptor already goes through — and the
+  shader reads them correctly. Larger blocks keep the GPU descriptor and its mapping.
+
+The kernel side that the path also needed: user buffers are mapped **cache-inhibited** (not
+write-combined), and `submit` cleans and barriers the buffers a job names before queuing it
+(`redwood_mali_to_memory`, `redwood_mali.cpp`), the same arrangement as `y2sios`'s.
+
+Open for later: the clear action of an integer attachment packs the float 1.0 as `0x3f800000`
+instead of the word 1 (a clear-only pass reads `1065353216`), which matters only to integer
+render targets; floats — what CoreAnimation draws — are unaffected.
+
 ## What is next
 
-- A triangle through Metal (`--draw`, with `AppleMetalGLRenderer.bundle/default.metallib`), then
-  CoreAnimation on Metal (`--picture` at the panel's size), which is the road to the wallpaper.
+- `--picture`: the same render path at the panel's size, put on the panel.
+- CoreAnimation on Metal: the properties on before backboardd starts, then the wallpaper.
 - The runtime still calls the GPU "Mali-G77 MP11" in its name (`-name`, informative only); the
   compiler and the kernel side are this phone's G52.
 

@@ -1,0 +1,16 @@
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalsoftpipe).
+#
+# The same draw as rc.jobs.metaldraw, with the compiler library's rasterizer in plain C
+# (RWA_SOFTWARE=1) instead of panfrost. The reference words this test compares against were
+# produced this way, so "THE SAME" here says the whole Metal -> runtime -> library -> UBO
+# binding chain is right and the difference is in the GPU driver.
+#
+# v12's NIR dump found the real shape of the failure: clearFragment20 does not write a constant,
+# it stores what it loads from UBO 14 at offset 16. The test fills that buffer with
+# (i * 7 + 13) & 0xff, and the pixel came back 0 for all four words, so the UBO reached the
+# shader as zeros. On softpipe the UBO is filled from the same buffers by the same bind_stage.
+/redwood/bin/rwtouch wait 40
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_props on
+/redwood/bin/say_run /redwood/bin/metal_drv_test --env RWA_SOFTWARE=1 --draw --fragment clearFragment20 /System/Library/Extensions/AppleMetalGLRenderer.bundle/default.metallib
+/redwood/bin/say_run /redwood/bin/metal_props off
