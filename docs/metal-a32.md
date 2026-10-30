@@ -95,12 +95,48 @@ No crash, no respring; the phone was back in Android 355 s after the boot. Metal
 driver's device object, its command model and the panfrost/Bifrost compiler library all load on
 the A32.
 
+## The first dispatch (test61)
+
+`rc.jobs.metalcompute` repeats the sweep's setup and then runs one Apple compute kernel,
+`MetalFaceMask_InitMinMax` from `/System/Library/CoreImage/PortraitFilters.cifilter/default.metallib`
+— the one the `y2sios` port tried first: one 24-byte device buffer, no textures, no samplers,
+and it writes its buffer unconditionally, so an all-zero result means the dispatch did not
+happen rather than that the kernel had nothing to say.
+
+```
+drvtest: before anything, MTLCreateSystemDefaultDevice() = RedwoodMetalDevice
+drvtest: it calls itself "Mali-G77 MP11 (product 0x7402, Redwood)"
+drvtest: newBufferWithLength:options: gave RedwoodMetalBuffer
+drvtest:   length 4096, contents 0x100b40000 ... wrote 4096 bytes and read back the same bytes
+drvtest: .../default.metallib, 213028 bytes
+drvtest: newLibraryWithData: gave _MTLLibrary with 36 functions
+m2m-nodev: I PSO compute pipeline made: MetalFaceMask_InitMinMax (1 buffers, 0 textures, 0 samplers)
+drvtest: compute MetalFaceMask_InitMinMax compiled: 256 threads per group, width 8, 0 bytes of threadgroup memory
+drvtest: of 1 functions, 1 compiled and 0 were refused
+drvtest: newCommandQueue gave RedwoodMetalCommandQueue
+RedwoodMali: request 0x42, 24 bytes        (CREATE_BO)
+RedwoodMali: request 0x43, 16 bytes        (MMAP_BO)
+RedwoodMali: job 1 at ... (+0x1c0, buffer 38), fragment 0, 5 handles
+drvtest: commandBuffer RedwoodMetalCommandBuffer, computeCommandEncoder RedwoodMetalComputeEncoder
+drvtest: dispatched MetalFaceMask_InitMinMax: status 4
+drvtest: buffer 0: 15 non-zero bytes of 4096, first words 7fffffff 7fffffff 7fffffff 80000000
+RedwoodMali: a client goes after 1 job chain, 0 of them unfinished
+say_run: /redwood/bin/metal_drv_test exited with status 0
+```
+
+`status 4` is Metal's completed, the first words are `atomicMinMax`'s answer, and the job is
+one chain with 0 unfinished: the AIR front end compiled the function to Bifrost and the GPU
+ran it.
+
+**Stability, open**: backboardd restarted once 80 s later (its GL client closed after 13,430
+jobs, 0 unfinished; memory was 1.2 GB available and no job faulted). The same Gl-only port has
+resprung before, so it may not be Metal's; a control boot with the same kernel and `metal=1`
+but no properties set is the next measurement before drawing.
+
 ## What is next
 
-- `metal_drv_test` creating the device itself (`initWithAcceleratorPort:` + `MTLAddDevice`) and
-  compiling a system `.metallib` (`/System/Library/VideoDecoders/AV1SW.metallib`) to Bifrost code.
-- `--draw`: the first triangle through Metal, and then CoreAnimation on Metal (`--picture` at
-  the panel's size), which is the road to the wallpaper.
+- A triangle through Metal (`--draw`, with `AppleMetalGLRenderer.bundle/default.metallib`), then
+  CoreAnimation on Metal (`--picture` at the panel's size), which is the road to the wallpaper.
 - The runtime still calls the GPU "Mali-G77 MP11" in its name (`-name`, informative only); the
   compiler and the kernel side are this phone's G52.
 
