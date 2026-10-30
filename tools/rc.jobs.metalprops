@@ -1,0 +1,29 @@
+# Commands run by the launchd job com.hakios.demo (RC_JOBS=rc.jobs.metalprops).
+#
+# The first boot in which iOS's own daemons can reach our Metal device: boot-arg metal=1 opens
+# IOAcceleratorES::setProperties, and metal_props puts MetalPluginName and MetalPluginClassName
+# there. From that moment a process that asks Metal composes
+# /System/Library/Extensions/RedwoodMetal.bundle, opens it with NSBundle and takes
+# RedwoodMetalDevice -- all of Metal's own discovery.
+#
+# say_run is what puts a program's lines in the kernel's log: a job's standard output ends at
+# /dev/console and is kept nowhere (src/say_run.c, kern.hakios.say).
+#
+# The wait is so that SpringBoard and backboardd are already up and drawing with the GL renderer
+# before the properties appear: what this run measures is discovery with the system running, not
+# the window server taking a different road at startup.
+#
+# metal_drv_test --sweep is the one form of the test meant for a boot with launchd alive: it asks
+# Metal for the system device (no dlopen, no MTLAddDevice, so no second device to abort on) and
+# counts, per class, the methods Metal's protocols require that the driver does not answer.
+#
+# metal_props show prints the path Metal would open and whether it is there, which is the one
+# thing to look at first when a sweep finds no device.
+#
+# The last line takes the properties off again at once.
+/redwood/bin/rwtouch wait 40
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_props on
+/redwood/bin/say_run /redwood/bin/metal_props show
+/redwood/bin/say_run /redwood/bin/metal_drv_test --sweep
+/redwood/bin/say_run /redwood/bin/metal_props off

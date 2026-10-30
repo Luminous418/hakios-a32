@@ -22,6 +22,7 @@ the end of `userdata`) and the kernel reads it off the eMMC as it needs it.
 | touch | works | STM FTS5CU56A on I2C6 at 0x49, bit-banged on GPIO89/90 (`kernel/bsd/dev/hakios.fts.c`); its two rails (GPIO4 and PMIC VCAMA2) are switched on from the kernel |
 | buttons | works | power and volume up/down (`kernel/bsd/dev/hakios.mtkkeys.c`) |
 | GPU | works | Mali-G52 r1p0 (step 6/6), `RedwoodMali`, Mesa panfrost and **CoreAnimation on the GPU** (`GL=1 gl=1`): 21,729 job chains, 0 failed, 21–31 fps peaks; with panfrost's BO cache retained and its tiler heap lazy (32 MB) a 5-minute run had no respring (one app, Photos, crashed), see `docs/gpu-a32.md` |
+| Metal | partial | the `y2sios` runtime (`libredwoodair` + `RedwoodMetal.bundle`) on this GPU: Metal's own discovery returns `RedwoodMetalDevice`, 11 driver classes with **0 unanswered methods**, and the panfrost/Bifrost compiler library loads (`metal=1`); no draw yet, see `docs/metal-a32.md` |
 | CPU | works | 4 cores; A75 at 1999 MHz and A55 at 1699 MHz with `mtk_cpufreq=3` (`kernel/bsd/dev/hakios.mtkcpufreq.c`); a ten-minute run stayed there (`docs/stability-a32.md`) |
 | battery | works | MT6358 `BATADC` (voltage, 3:1 divider) and `CHRDET`, `battery=2`; temperature and current are still placeholders |
 | sensors | partial | the SCP sensor hub runs and the accelerometer streams (`scp_step=6`, `kernel/bsd/dev/hakios.scp.c`); turning the samples into screen rotation is still user-space work |
@@ -39,11 +40,12 @@ mali: second job, through the GPU's page tables ... -- the GPU ran it
 mali: came up to step 6 of 6
 ```
 
-The GPU itself works. What is missing for acceleration is the layer above: the panfrost IOKit
-service, a panfrost DRM shim for Mesa, and (for Metal) a Mali Metal driver. The public
-`hakios-xnu-kernel` and `hakios-metal` repositories only carry the Adreno/msm side; the
-Infinix's Mali panfrost/Metal work is not published. Leaving `mali=1` on changes nothing
-else: the GPU stays powered and tested.
+The GPU itself works, and the layer above it does too: `RedwoodMali` speaks panfrost's DRM
+interface to Mesa (`GL=1`, CoreAnimation on the GPU; `docs/gpu-a32.md`), and the public
+`y2sios` Mali Metal runtime finds this phone's GPU through `RedwoodMetal.bundle`
+(`metal=1`; `docs/metal-a32.md`). The Infinix's own panfrost/Metal work is not published; what
+runs here is the public `y2sios` runtime on this phone's kernel and Bifrost compiler. Leaving
+`mali=1` on changes nothing else: the GPU stays powered and tested.
 
 ## What is here
 

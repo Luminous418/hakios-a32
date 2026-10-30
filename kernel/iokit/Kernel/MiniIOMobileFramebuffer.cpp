@@ -1536,22 +1536,109 @@ publishDisplayNode(void)
  * service of this class to appear before it looks for a GPU at all (once per process). An
  * accelerator without the properties that name its Metal and OpenGL ES drivers is passed
  * over by both, which leaves CoreAnimation with its software renderer, as before.
+ *
+ * With boot-arg metal=1 a user process may put those two properties here, which is the whole
+ * of what keeps Metal from finding our driver (Metal reads MetalPluginName off this service,
+ * opens /System/Library/Extensions/<it>.bundle and takes the class MetalPluginClassName names).
  */
+#define kAcceleratorPluginNameKey       "MetalPluginName"
+#define kAcceleratorPluginClassNameKey  "MetalPluginClassName"
+
+static bool gAcceleratorTakesProperties;        /* boot-arg metal=1 */
+
 class IOAcceleratorES : public IOService
 {
 	OSDeclareDefaultStructors(IOAcceleratorES);
+
+public:
+	virtual IOReturn setProperties(OSObject * properties) APPLE_KEXT_OVERRIDE;
 };
 
 OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
+
+/*
+ * The switch, from user space (metal_props): IORegistryEntrySetCFProperties() with the two
+ * keys. Everything else is refused whole: this method exists for this one switch only. An empty
+ * string removes a property, which is the way out without a reboot (the properties live only in
+ * the registry, so processes started after they are gone go back to the software road).
+ */
+IOReturn
+IOAcceleratorES::setProperties(OSObject * properties)
+{
+	OSDictionary * dict = OSDynamicCast(OSDictionary, properties);
+	OSCollectionIterator * keys;
+	OSObject * next;
+	char who[32] = "?";
+
+	if (!gAcceleratorTakesProperties) {
+		static unsigned said;
+
+		if (said++ < 4) {
+			proc_selfname(who, sizeof(who));
+			IOLog("IOAcceleratorES: %s asks to set properties on it; boot-arg metal=1 was not given\n", who);
+		}
+		return kIOReturnUnsupported;
+	}
+	if (dict == NULL || dict->getCount() == 0) {
+		return kIOReturnBadArgument;
+	}
+	keys = OSCollectionIterator::withCollection(dict);
+	if (keys == NULL) {
+		return kIOReturnNoMemory;
+	}
+	proc_selfname(who, sizeof(who));
+	while ((next = keys->getNextObject()) != NULL) {
+		const OSSymbol * key = OSDynamicCast(OSSymbol, next);
+
+		if (key == NULL || (!key->isEqualTo(kAcceleratorPluginNameKey) &&
+		    !key->isEqualTo(kAcceleratorPluginClassNameKey))) {
+			IOLog("IOAcceleratorES: refusing what %s sent: only " kAcceleratorPluginNameKey " and "
+			    kAcceleratorPluginClassNameKey " are taken here\n", who);
+			keys->release();
+			return kIOReturnUnsupported;
+		}
+		if (OSDynamicCast(OSString, dict->getObject(key)) == NULL) {
+			IOLog("IOAcceleratorES: refusing \"%s\" from %s: Metal reads it as a CFString\n",
+			    key->getCStringNoCopy(), who);
+			keys->release();
+			return kIOReturnBadArgument;
+		}
+	}
+	keys->reset();
+	while ((next = keys->getNextObject()) != NULL) {
+		const OSSymbol * key = OSDynamicCast(OSSymbol, next);
+		OSString * value = OSDynamicCast(OSString, dict->getObject(key));
+
+		if (value->getLength() == 0) {
+			removeProperty(key);
+			IOLog("IOAcceleratorES: %s removed by %s\n", key->getCStringNoCopy(), who);
+		} else if (setProperty(key, value)) {
+			IOLog("IOAcceleratorES: %s = %s, set by %s\n", key->getCStringNoCopy(),
+			    value->getCStringNoCopy(), who);
+		} else {
+			IOLog("IOAcceleratorES: %s could not be set\n", key->getCStringNoCopy());
+			keys->release();
+			return kIOReturnNoMemory;
+		}
+	}
+	keys->release();
+	return kIOReturnSuccess;
+}
 
 static void
 publishAccelerator(IOService * provider)
 {
 	IOAcceleratorES * accelerator = OSTypeAlloc(IOAcceleratorES);
+	uint32_t metal = 0;
 
+	gAcceleratorTakesProperties = PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0;
 	if (accelerator != NULL && accelerator->init() && accelerator->attach(provider)) {
 		accelerator->setName("sgx");
 		accelerator->registerService();
+		if (gAcceleratorTakesProperties) {
+			IOLog("IOAcceleratorES: metal=%u: this service takes " kAcceleratorPluginNameKey
+			    " and " kAcceleratorPluginClassNameKey " from user space\n", metal);
+		}
 	}
 	OSSafeReleaseNULL(accelerator);
 }

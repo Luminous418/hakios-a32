@@ -45,6 +45,8 @@ void redwood_mali_tag(uint64_t address, uint32_t kind, uint32_t width, uint32_t 
 uint32_t redwood_mali_submit(uint64_t chain, bool fragment);
 uint64_t redwood_mali_enqueue(uint64_t chain, bool fragment);
 bool redwood_mali_wait(uint64_t seq, uint64_t timeout_ns);
+bool redwood_mali_done(uint64_t seq);
+uint64_t redwood_mali_last(void);
 
 void RedwoodMaliStart(void);
 void MiniIOMobileFramebufferShow(const uint8_t * pixels, uint32_t width, uint32_t height, uint32_t rowBytes);
@@ -66,10 +68,17 @@ enum {
 	kPanfrostGetParam       = 0x44,
 	kPanfrostGetBOOffset    = 0x45,
 	kPanfrostMadvise        = 0x48,
-	kRedwoodSurfaceSeq      = 0x7c,         /* ours: a surface's last job, or "drawing, not yet sent" (struct redwood_surface_seq) */
+	kPanfrostSetLabelBO     = 0x49,         /* a label on a buffer: kept nowhere here */
+	kRedwoodSyncobjSet      = 0x7b,         /* ours: a syncobj's fence set, and read (what redwood-drm makes sync files of) */
+	kRedwoodSyncobjGet      = 0x7c,
 	kRedwoodWait            = 0x7d,         /* ours: wait for a job by its number (struct redwood_wait) */
 	kRedwoodSurface         = 0x7e,         /* ours, as RedwoodGPU's: an IOSurface's memory as a buffer */
 	kRedwoodShow            = 0x7f,         /* ours, as RedwoodGPU's: a test's pixels onto the panel */
+	kDrmSyncobjCreate       = 0xbf,         /* Linux's drm_syncobj.h: what Mesa's panfrost waits with */
+	kDrmSyncobjDestroy      = 0xc0,
+	kDrmSyncobjWait         = 0xc3,
+	kDrmSyncobjReset        = 0xc4,
+	kDrmSyncobjSignal       = 0xc5,
 };
 
 struct redwood_surface {
@@ -87,13 +96,36 @@ struct redwood_wait {
 	int64_t timeout_ns;
 };
 
-/* kRedwoodSurfaceSeq: the job after which the surface is drawn (MiniIOSurfaceDrawn), or
- * REDWOOD_SEQ_PENDING while the Metal driver's thread has its frame still to send */
-struct redwood_surface_seq {
-	uint32_t surface, pad;
-	uint64_t seq;
+struct drm_syncobj_create {
+	uint32_t handle, flags;
 };
-#define REDWOOD_SEQ_PENDING     (~0ull)
+
+struct drm_syncobj_destroy {
+	uint32_t handle, pad;
+};
+
+struct drm_syncobj_wait {
+	uint64_t handles;
+	int64_t timeout_nsec;
+	uint32_t count_handles, flags, first_signaled, pad;
+	uint64_t deadline_nsec;
+};
+
+struct drm_syncobj_array {
+	uint64_t handles;
+	uint32_t count_handles, pad;
+};
+
+/* ours: one syncobj's fence -- the job it stands for, 0 when there is nothing to wait for */
+struct redwood_syncobj_fence {
+	uint32_t handle, pad;
+	uint64_t fence;
+};
+
+/* ours: the GPU's counters, for a test to say whether it faulted under it */
+struct redwood_mali_counts {
+	uint64_t jobs, faults, resets, last;
+};
 
 struct redwood_show {
 	uint64_t pixels;
@@ -112,6 +144,14 @@ struct drm_panfrost_submit {
 	uint64_t bo_handles;
 	uint32_t bo_handle_count;
 	uint32_t requirements;
+	uint32_t jm_ctx_handle, pad;            /* (newer than Mesa 25.0.7, which passes 48 bytes) */
+};
+/* SUBMIT as the Metal driver's libdrm sends it (tools/mesa/redwood-drm): Linux's request and, after
+ * it, where the job's sequence number is written back, so that the library can answer an idle query
+ * itself. */
+struct redwood_mali_submit_ex {
+	struct drm_panfrost_submit submit;
+	uint64_t seqno;
 };
 #define PANFROST_JD_REQ_FS      (1u << 0)
 
@@ -146,6 +186,8 @@ struct drm_panfrost_madvise {
 
 #define MALI_BUFFERS            4096
 #define MALI_BUFFER_MAX         (256ull << 20)
+#define MALI_SYNCOBJS           1024
+#define DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL 1u
 
 struct mali_buffer {
 	IOMemoryDescriptor * memory;            /* made here, or the pixels of an IOSurface (`surface`) */
@@ -155,6 +197,28 @@ struct mali_buffer {
 };
 
 static IOLock * gMaliLock;
+
+/* How long from now an absolute time of the caller's (mach_continuous_time in ns, what the Metal
+ * driver's libdrm makes of Mesa's deadline) is, in ms: 0 when it has passed, 5 s for "no limit". */
+static uint64_t
+milliseconds_left(int64_t when)
+{
+	uint64_t now;
+	int64_t left;
+
+	if (when <= 0) {
+		return 0;
+	}
+	if (when == INT64_MAX) {
+		return 5000;
+	}
+	absolutetime_to_nanoseconds(mach_continuous_time(), &now);
+	left = when - (int64_t) now;
+	if (left <= 0) {
+		return 0;
+	}
+	return (uint64_t) left / NSEC_PER_MSEC > 5000 ? 5000 : ((uint64_t) left + NSEC_PER_MSEC - 1) / NSEC_PER_MSEC;
+}
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
@@ -208,14 +272,19 @@ class RedwoodMaliUserClient : public IOUserClient
 	OSDeclareDefaultStructors(RedwoodMaliUserClient);
 
 	struct mali_buffer *    fBuffers;               /* handle n is fBuffers[n - 1] */
+	uint64_t *              fSyncobjs;              /* handle n is fSyncobjs[n - 1]; ~0: none */
 	uint32_t                fNextBuffer;
 	uint32_t                fSubmits, fFailed, fRequests;
 
 	struct mali_buffer * buffer(uint32_t handle);
+	uint64_t * syncobj(uint32_t handle);
 	void freeBuffer(struct mali_buffer * b);
 	IOReturn createBO(struct drm_panfrost_create_bo * request);
 	struct mali_buffer * newBuffer(IOMemoryDescriptor * memory, uint64_t from, uint64_t size, uint32_t * handle);
 	IOReturn surfaceBuffer(struct redwood_surface * request);
+	IOReturn submit(struct drm_panfrost_submit * request, size_t size);
+	IOReturn syncobjWait(struct drm_syncobj_wait * request);
+	IOReturn syncobjArray(struct drm_syncobj_array * request, bool reset);
 
 public:
 	virtual bool start(IOService * provider) APPLE_KEXT_OVERRIDE;
@@ -238,7 +307,22 @@ RedwoodMaliUserClient::start(IOService * provider)
 	IOLog("RedwoodMali: a client opened the GPU\n");
 	OSIncrementAtomic((SInt32 *) &gMaliClients);
 	fBuffers = IONewZero(struct mali_buffer, MALI_BUFFERS);
-	return fBuffers != NULL;
+	fSyncobjs = IONew(uint64_t, MALI_SYNCOBJS);
+	if (fSyncobjs != NULL) {
+		for (uint32_t i = 0; i < MALI_SYNCOBJS; i++) {
+			fSyncobjs[i] = ~0ULL;
+		}
+	}
+	return fBuffers != NULL && fSyncobjs != NULL;
+}
+
+uint64_t *
+RedwoodMaliUserClient::syncobj(uint32_t handle)
+{
+	if (handle == 0 || handle > MALI_SYNCOBJS || fSyncobjs == NULL || fSyncobjs[handle - 1] == ~0ULL) {
+		return NULL;
+	}
+	return &fSyncobjs[handle - 1];
 }
 
 struct mali_buffer *
@@ -410,6 +494,176 @@ RedwoodMaliUserClient::surfaceBuffer(struct redwood_surface * request)
 	return kIOReturnSuccess;
 }
 
+/*
+ * SUBMIT: the chain is queued, not run here; its number goes back in `jc` (what the GL shim
+ * waits on) and, when the request is long enough, in `seqno` (what the Metal driver's libdrm
+ * reads so that it can answer an idle query without a call); every buffer it names remembers it.
+ * With the lock held.
+ */
+IOReturn
+RedwoodMaliUserClient::submit(struct drm_panfrost_submit * request, size_t size)
+{
+	uint32_t * handles = NULL;
+	uint32_t count = request->bo_handle_count;
+	uint64_t seq = 0, * out;
+	struct mali_buffer * b;
+
+	if (request->jc == 0 || count > MALI_BUFFERS) {
+		return kIOReturnBadArgument;
+	}
+	if (count != 0) {
+		handles = IONew(uint32_t, count);
+		if (handles == NULL) {
+			return kIOReturnNoMemory;
+		}
+		if (copyin((user_addr_t) request->bo_handles, handles, count * sizeof(uint32_t)) != 0) {
+			IODelete(handles, uint32_t, count);
+			return kIOReturnVMError;
+		}
+	}
+	fSubmits++;
+	gMaliSubmits++;
+	/*
+	 * For telling a job that runs from one that faults: the first four submissions' descriptors,
+	 * 32 words each, with the buffer they sit in.
+	 */
+	if (fSubmits <= 4) {
+		for (uint32_t i = 0; i < count; i++) {
+			struct mali_buffer * jb = buffer(handles[i]);
+			IOBufferMemoryDescriptor * mb;
+			uint8_t * base;
+			uint64_t at;
+
+			if (jb == NULL || request->jc < jb->address || request->jc >= jb->address + jb->size) {
+				continue;
+			}
+			at = request->jc - jb->address;
+			mb = OSDynamicCast(IOBufferMemoryDescriptor, jb->memory);
+			base = mb != NULL ? (uint8_t *) mb->getBytesNoCopy() : NULL;
+			if (base == NULL || at + 128 > jb->size) {
+				break;
+			}
+			{
+				volatile uint32_t * w = (volatile uint32_t *) (base + at);
+
+				IOLog("RedwoodMali: job %u at %#llx (+%#llx, buffer %u), fragment %u, %u handles\n",
+				    fSubmits, request->jc, at, handles[i],
+				    (request->requirements & PANFROST_JD_REQ_FS) ? 1 : 0, count);
+				for (unsigned line = 0; line < 4; line++) {
+					IOLog("RedwoodMali:   %#04x: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+					    line * 32, w[line * 8], w[line * 8 + 1], w[line * 8 + 2], w[line * 8 + 3],
+					    w[line * 8 + 4], w[line * 8 + 5], w[line * 8 + 6], w[line * 8 + 7]);
+				}
+			}
+			break;
+		}
+	}
+	seq = redwood_mali_enqueue(request->jc, request->requirements & PANFROST_JD_REQ_FS);
+	if (seq != 0) {
+		for (uint32_t i = 0; i < count; i++) {
+			b = buffer(handles[i]);
+			if (b != NULL) {
+				b->last_seq = seq;
+				if (b->surface != NULL) {
+					b->surface->maliSeq = seq;      /* (MiniIOSurfaceDrawn) */
+				}
+			}
+		}
+		if (request->out_sync != 0 && (out = syncobj(request->out_sync)) != NULL) {
+			*out = seq;
+		}
+		if (size >= sizeof(struct redwood_mali_submit_ex)) {
+			((struct redwood_mali_submit_ex *) request)->seqno = seq;
+		}
+	}
+	if (handles != NULL) {
+		IODelete(handles, uint32_t, count);
+	}
+	request->jc = seq;
+	return seq != 0 ? kIOReturnSuccess : kIOReturnNotReady;
+}
+
+/*
+ * One syncobj, or several: signalled when the job it stands for is done. The fences are taken
+ * under the lock and then waited for without it, the last one being enough -- the queue runs in
+ * order. A timeout of 0 is a look, INT64_MAX "as long as it takes" (capped), and anything else an
+ * absolute time on mach_continuous_time (the Metal driver's libdrm converts Mesa's deadline).
+ */
+IOReturn
+RedwoodMaliUserClient::syncobjWait(struct drm_syncobj_wait * request)
+{
+	uint32_t count = request->count_handles, handles[64];
+	uint64_t fences[64], patience = milliseconds_left(request->timeout_nsec), began = mach_absolute_time(), now;
+	bool all = (request->flags & DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL) != 0;
+
+	if (count == 0 || count > 64 || copyin((user_addr_t) request->handles, handles, count * sizeof(uint32_t)) != 0) {
+		return kIOReturnBadArgument;
+	}
+	IOLockLock(gMaliLock);
+	for (uint32_t i = 0; i < count; i++) {
+		uint64_t * s = syncobj(handles[i]);
+
+		if (s == NULL) {
+			IOLockUnlock(gMaliLock);
+			return kIOReturnBadArgument;
+		}
+		fences[i] = *s;
+	}
+	IOLockUnlock(gMaliLock);
+	for (;;) {
+		uint32_t done = 0;
+		uint64_t latest = 0;
+
+		for (uint32_t i = 0; i < count; i++) {
+			if (fences[i] == 0 || redwood_mali_done(fences[i])) {
+				if (done++ == 0) {
+					request->first_signaled = i;
+				}
+			}
+		}
+		if (all ? done == count : done != 0) {
+			return kIOReturnSuccess;
+		}
+		absolutetime_to_nanoseconds(mach_absolute_time() - began, &now);
+		if (now / NSEC_PER_MSEC >= patience) {
+			static uint32_t told;
+
+			if (told++ < 16) {
+				IOLog("RedwoodMali: a syncobj wait gave up after %llu ms: %u fence(s), first %llu, last "
+				    "submitted %llu, done %d\n", now / NSEC_PER_MSEC, count, fences[0],
+				    redwood_mali_last(), (int) redwood_mali_done(fences[0]));
+			}
+			return kIOReturnTimeout;
+		}
+		for (uint32_t i = 0; i < count; i++) {
+			latest = fences[i] > latest ? fences[i] : latest;
+		}
+		(void)redwood_mali_wait(all ? latest : fences[0], (patience - now / NSEC_PER_MSEC) * NSEC_PER_MSEC);
+	}
+}
+
+/* RESET and SIGNAL: both leave a syncobj with nothing to wait for. */
+IOReturn
+RedwoodMaliUserClient::syncobjArray(struct drm_syncobj_array * request, bool reset)
+{
+	uint32_t handles[64], count = request->count_handles;
+
+	(void) reset;
+	if (count == 0 || count > 64 || copyin((user_addr_t) request->handles, handles, count * sizeof(uint32_t)) != 0) {
+		return kIOReturnBadArgument;
+	}
+	IOLockLock(gMaliLock);
+	for (uint32_t i = 0; i < count; i++) {
+		uint64_t * s = syncobj(handles[i]);
+
+		if (s != NULL) {
+			*s = 0;
+		}
+	}
+	IOLockUnlock(gMaliLock);
+	return kIOReturnSuccess;
+}
+
 IOReturn
 RedwoodMaliUserClient::clientClose(void)
 {
@@ -433,6 +687,10 @@ RedwoodMaliUserClient::free(void)
 	if (fBuffers != NULL) {
 		IODelete(fBuffers, struct mali_buffer, MALI_BUFFERS);
 		fBuffers = NULL;
+	}
+	if (fSyncobjs != NULL) {
+		IODelete(fSyncobjs, uint64_t, MALI_SYNCOBJS);
+		fSyncobjs = NULL;
 	}
 	IOUserClient::free();
 }
@@ -462,19 +720,26 @@ RedwoodMaliUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
 	union {
 		struct drm_gem_close close;
 		struct drm_panfrost_submit submit;
+		struct redwood_mali_submit_ex submitEx;
 		struct drm_panfrost_wait_bo wait;
 		struct drm_panfrost_create_bo create;
 		struct drm_panfrost_mmap_bo mmap;
 		struct drm_panfrost_get_param param;
 		struct drm_panfrost_get_bo_offset offset;
 		struct drm_panfrost_madvise madvise;
+		struct drm_syncobj_create syncCreate;
+		struct drm_syncobj_destroy syncDestroy;
+		struct drm_syncobj_wait syncWait;
+		struct drm_syncobj_array syncArray;
+		struct redwood_syncobj_fence syncFence;
+		struct redwood_mali_counts counts;
 		struct redwood_show show;
 		struct redwood_surface surface;
 		struct redwood_wait waitseq;
-		struct redwood_surface_seq sseq;
 	} r;
 	size_t size = args->structureInputSize;
 	struct mali_buffer * b;
+	uint64_t * s;
 	IOReturn ret = kIOReturnSuccess;
 
 	if (args->structureInput == NULL || size > sizeof(r) || fBuffers == NULL) {
@@ -486,27 +751,32 @@ RedwoodMaliUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
 	bzero(&r, sizeof(r));
 	memcpy(&r, args->structureInput, size);
 
-	/* the two waits, without holding everybody else up */
-	if (selector == kRedwoodWait || selector == kPanfrostWaitBO) {
-		uint64_t seq = r.waitseq.seq;
-		int64_t timeout = r.waitseq.timeout_ns;
+	/* the waits, without holding everybody else up */
+	if (selector == kRedwoodWait && size == sizeof(struct redwood_wait)) {
+		ret = r.waitseq.seq == 0 || redwood_mali_wait(r.waitseq.seq,
+		    r.waitseq.timeout_ns > 0 ? (uint64_t) r.waitseq.timeout_ns : 0) ? kIOReturnSuccess : kIOReturnTimeout;
+		goto answer;
+	}
+	if (selector == kPanfrostWaitBO) {
+		int64_t timeout;
+		uint64_t seq;
 
-		if (selector == kPanfrostWaitBO) {
-			IOLockLock(gMaliLock);
-			b = buffer(r.wait.handle);
-			seq = b != NULL ? b->last_seq : 0;
-			IOLockUnlock(gMaliLock);
-			timeout = r.wait.timeout_ns;
-			if (b == NULL) {
-				return kIOReturnNotFound;
-			}
+		IOLockLock(gMaliLock);
+		b = buffer(r.wait.handle);
+		seq = b != NULL ? b->last_seq : 0;
+		IOLockUnlock(gMaliLock);
+		if (b == NULL) {
+			ret = kIOReturnNotFound;
+			goto answer;
 		}
-		ret = seq == 0 || redwood_mali_wait(seq, timeout > 0 ? (uint64_t) timeout : 0) ? kIOReturnSuccess : kIOReturnTimeout;
-		if (args->structureOutput != NULL && args->structureOutputSize >= size) {
-			memcpy(args->structureOutput, &r, size);
-			args->structureOutputSize = (uint32_t) size;
-		}
-		return ret;
+		timeout = r.wait.timeout_ns;
+		ret = seq == 0 || redwood_mali_wait(seq,
+		    timeout > 0 ? (uint64_t) timeout : 0) ? kIOReturnSuccess : kIOReturnTimeout;
+		goto answer;
+	}
+	if (selector == kDrmSyncobjWait) {
+		ret = syncobjWait(&r.syncWait);
+		goto answer;
 	}
 	IOLockLock(gMaliLock);
 	if (fRequests++ < 32) {                 /* the first ones a client makes, for following it from the log */
@@ -530,61 +800,63 @@ RedwoodMaliUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
 		ret = b != NULL ? kIOReturnSuccess : kIOReturnNotFound;
 		r.offset.offset = b != NULL ? b->address : 0;
 		break;
-	case kPanfrostSubmit: {
-		/* queued, not run here: the job's number goes back in `jc`, and every buffer it names
-		 * remembers it (kPanfrostWaitBO, and no buffer is freed under a job that uses it) */
-		uint64_t seq = 0;
-
-		fSubmits++;
-		gMaliSubmits++;
-		if (r.submit.jc != 0) {
-			seq = redwood_mali_enqueue(r.submit.jc, r.submit.requirements & PANFROST_JD_REQ_FS);
-		}
-		for (uint32_t i = 0; seq != 0 && i < r.submit.bo_handle_count && i < 4096; i += 64) {
-			uint32_t handles[64];
-			uint32_t n = r.submit.bo_handle_count - i < 64 ? r.submit.bo_handle_count - i : 64;
-
-			if (copyin((user_addr_t) (r.submit.bo_handles + i * sizeof(uint32_t)), handles, n * sizeof(uint32_t)) != 0) {
-				break;
-			}
-			for (uint32_t k = 0; k < n; k++) {
-				b = buffer(handles[k]);
-				if (b != NULL) {
-					b->last_seq = seq;
-					if (b->surface != NULL) {
-						b->surface->maliSeq = seq;      /* (MiniIOSurfaceDrawn) */
-					}
-				}
-			}
-		}
-		r.submit.jc = seq;
+	case kPanfrostSubmit:
+		ret = submit(&r.submit, size);
 		break;
-	}
-	case kRedwoodSurface:
-		ret = surfaceBuffer(&r.surface);
+	case kPanfrostSetLabelBO:               /* a label is for the driver's debug output: kept nowhere */
 		break;
-	case kRedwoodSurfaceSeq: {
-		MiniIOSurface * surface = MiniIOSurfaceCopy(r.sseq.surface);
-
-		if (surface != NULL) {
-			/* drawing begins into a surface the display still holds (queued or being copied): what it
-			 * shows would be part this frame, part the next -- counted, the first few by name */
-			static uint32_t overDisplayed;
-
-			if (r.sseq.seq == ~0ull && surface->useCount[0] != 0 && ++overDisplayed <= 8) {
-				redwood_keep("RedwoodMali: surface %u drawn into while the display holds it (%u so far)",
-				    r.sseq.surface, overDisplayed);
-			} else if (r.sseq.seq == ~0ull && surface->useCount[0] != 0 && (overDisplayed & 255) == 0) {
-				redwood_keep("RedwoodMali: surfaces drawn into while the display holds them: %u", overDisplayed);
-			}
-			surface->maliSeq = r.sseq.seq;
-			MiniIOSurfaceDrop(surface);
-			wakeup((caddr_t) &surface->maliSeq);
+	case kPanfrostMadvise:
+		r.madvise.retained = 1;
+		break;
+	case kDrmGemClose:
+		b = buffer(r.close.handle);
+		if (b != NULL) {
+			freeBuffer(b);
 		} else {
 			ret = kIOReturnNotFound;
 		}
 		break;
-	}
+	case kDrmSyncobjCreate:
+		ret = kIOReturnNoResources;
+		for (uint32_t i = 0; i < MALI_SYNCOBJS; i++) {
+			if (fSyncobjs[i] == ~0ULL) {
+				fSyncobjs[i] = 0;               /* signalled or not, there is nothing to wait for yet */
+				r.syncCreate.handle = i + 1;
+				ret = kIOReturnSuccess;
+				break;
+			}
+		}
+		break;
+	case kDrmSyncobjDestroy:
+		if ((s = syncobj(r.syncDestroy.handle)) != NULL) {
+			*s = ~0ULL;
+		} else {
+			ret = kIOReturnBadArgument;
+		}
+		break;
+	case kDrmSyncobjReset:
+	case kDrmSyncobjSignal:
+		ret = syncobjArray(&r.syncArray, selector == kDrmSyncobjReset);
+		break;
+	case kRedwoodSyncobjSet:
+	case kRedwoodSyncobjGet:
+		if ((s = syncobj(r.syncFence.handle)) == NULL) {
+			ret = kIOReturnBadArgument;
+		} else if (selector == kRedwoodSyncobjSet) {
+			*s = r.syncFence.fence;
+		} else {
+			r.syncFence.fence = *s;
+		}
+		break;
+	case kRedwoodWait:                      /* 0x7d, 32 bytes: the Metal driver's counters (struct redwood_mali_counts) */
+		r.counts.jobs = gMaliSubmits;
+		r.counts.faults = gMaliFailed;
+		r.counts.resets = 0;
+		r.counts.last = redwood_mali_last();
+		break;
+	case kRedwoodSurface:
+		ret = surfaceBuffer(&r.surface);
+		break;
 	case kRedwoodShow: {
 		struct redwood_show * show = (struct redwood_show *) &r;
 		uint64_t bytes = (uint64_t) show->rowBytes * show->height;
@@ -604,20 +876,6 @@ RedwoodMaliUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
 		IOFreeData(pixels, bytes);
 		break;
 	}
-	case kPanfrostWaitBO:                   /* every job has finished before its submission returned */
-		ret = buffer(r.wait.handle) != NULL ? kIOReturnSuccess : kIOReturnNotFound;
-		break;
-	case kPanfrostMadvise:
-		r.madvise.retained = 1;
-		break;
-	case kDrmGemClose:
-		b = buffer(r.close.handle);
-		if (b != NULL) {
-			freeBuffer(b);
-		} else {
-			ret = kIOReturnNotFound;
-		}
-		break;
 	default:
 		IOLog("RedwoodMali: request %#x (%zu bytes) is not known here\n", selector, size);
 		ret = kIOReturnUnsupported;
@@ -625,6 +883,7 @@ RedwoodMaliUserClient::externalMethod(uint32_t selector, IOExternalMethodArgumen
 	}
 	IOLockUnlock(gMaliLock);
 
+answer:
 	if (args->structureOutput != NULL && args->structureOutputSize >= size) {
 		memcpy(args->structureOutput, &r, size);
 		args->structureOutputSize = (uint32_t) size;
