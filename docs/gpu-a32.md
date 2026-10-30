@@ -144,3 +144,27 @@ RedwoodMali: a client goes after 4 job chains, 0 of them unfinished
 
 The IOSurface import for CoreAnimation adds the surface's size in `pan_kmod.c` (the "file
 descriptor" is the IOSurface's ID) and `osmesa_surface_resource` built for panfrost.
+
+## CoreAnimation on the Mali (test55)
+
+`GL=1` image, booted with `mali=1 gl=1`. The window server loads `libhakios.gl` and Mesa picks
+the Mali:
+
+```
+hakios-gl: an OpenGL ES 3 context for CoreAnimation, by Mesa, off-screen (OSMesa):
+           OpenGL ES 3.1 Mesa 25.0.7; Mali-G52 r1 (Panfrost); shaders OpenGL ES GLSL ES 3.10
+RedwoodMali: request 0x7e, 40 bytes          (the 1125x2436 IOSurface imported as a buffer)
+mali: step 6 of 6; 1 clients, 729 buffers, 21729 job chains (0 failed)
+```
+
+The display swaps the surfaces the GPU drew (swap #1275 at 143 s), the UI is visibly more
+responsive, and the frame rate peaks at 21–31 a second (the software renderer was 10–14). No
+backboardd crash.
+
+What is still missing: the **wallpaper** (CoreAnimation's GL renderer does not draw it; the
+Metal driver is what draws it on the Infinix), and the GPU-side polish of the panfrost BO cache
+(`panfrost-retain`/`lazy-heap` from the public `y2sios` port).
+
+The fixes that made it work, from that port: `pan_kmod_bo_mmap` adds `bo_offset` (test52's
+0x40), cached BOs keep their CPU mapping (`panfrost-keepmap`), and the IOSurface import gets
+its size from the service (`pan_kmod.c`) with `osmesa_surface_resource` built for panfrost.
