@@ -1,0 +1,111 @@
+--- a/meson.build
++++ b/meson.build
+@@ -1716,7 +1716,7 @@
+   # dependencies (such as vk-runtime) linking to it
+   dep_libdrm = null_dep
+ endif
+-if host_machine.system() == 'darwin' and with_gallium_freedreno
++if host_machine.system() == 'darwin' and (with_gallium_freedreno or with_gallium_panfrost)
+   # No DRM on this system: freedreno's requests go to the kernel's driver through a stand-in
+   # for libdrm (src/hakios-drm, put there by Darwin on redwood's tools/mk-mesa.sh; its one
+   # source file is built with freedreno's drm layer, src/freedreno/drm).
+--- a/src/panfrost/lib/kmod/pan_kmod.h
++++ b/src/panfrost/lib/kmod/pan_kmod.h
+@@ -615,8 +615,16 @@
+    if (mmap_offset < 0)
+       return MAP_FAILED;
+ 
++#ifdef __APPLE__
++   (void)mmap_offset;
++   (void)bo_offset;
++   (void)prot;
++   (void)flags;
++   host_addr = hakios_drm_map(bo->dev->fd, bo->handle, size);
++#else
+    host_addr = os_mmap(host_addr, size, prot, flags, bo->dev->fd,
+                        mmap_offset + bo_offset);
++#endif
+    if (host_addr == MAP_FAILED) {
+       mesa_loge("mmap(..., size=%zu, prot=%d, flags=0x%x) failed: %s",
+                 size, prot, flags, strerror(errno));
+--- a/src/gallium/drivers/panfrost/pan_bo.c
++++ b/src/gallium/drivers/panfrost/pan_bo.c
+@@ -35,6 +35,9 @@
+ #include "wrap.h"
+ 
+ #include "util/os_mman.h"
++#ifdef __APPLE__
++#include <xf86drm.h>
++#endif
+ 
+ #include "util/u_inlines.h"
+ #include "util/u_math.h"
+--- a/src/gallium/targets/osmesa/osmesa_target.c
++++ b/src/gallium/targets/osmesa/osmesa_target.c
+@@ -30,6 +30,43 @@
+ #include "pipe/p_screen.h"
+ #include "pipe/p_state.h"
+ 
++#ifdef GALLIUM_PANFROST
++#include "panfrost/drm/panfrost_drm_public.h"
++#include "util/driconf.h"
++#include "util/xmlconfig.h"
++#include <xf86drm.h>
++
++static const driOptionDescription panfrost_options[] = {
++#include "panfrost/driinfo_panfrost.h"
++};
++
++/* The Mali's driver, where the kernel has started it (Darwin on the A32); NULL: none. */
++static int panfrost_fd = -1;
++static struct pipe_screen *
++osmesa_create_panfrost_screen(void)
++{
++   static driOptionCache info, cache;
++   static struct pipe_screen_config config;
++   struct pipe_screen *screen;
++   int fd;
++
++   if (debug_get_bool_option("OSMESA_SOFTWARE", false))
++      return NULL;
++   fd = drmOpenWithType("panfrost", NULL, DRM_NODE_RENDER);
++   if (fd < 0)
++      return NULL;
++   /* panfrost_create_screen() reads these without asking: NULL is a crash, not a default. */
++   driParseOptionInfo(&info, panfrost_options, ARRAY_SIZE(panfrost_options));
++   driParseConfigFiles(&cache, &info, 0, "panfrost", NULL, NULL, NULL, 0, NULL, 0);
++   config.options = &cache;
++   config.options_info = &info;
++   screen = panfrost_drm_screen_create(fd, &config);
++   if (screen)
++      panfrost_fd = fd;
++   return screen ? debug_screen_wrap(screen) : NULL;
++}
++#endif
++
+ #ifdef GALLIUM_FREEDRENO
+ #include "freedreno/drm/freedreno_drm_public.h"
+ #include "util/driconf.h"
+@@ -118,6 +155,11 @@
+    struct sw_winsys *winsys;
+    struct pipe_screen *screen;
+ 
++#ifdef GALLIUM_PANFROST
++   screen = osmesa_create_panfrost_screen();
++   if (screen)
++      return screen;
++#endif
+ #ifdef GALLIUM_FREEDRENO
+    screen = osmesa_create_gpu_screen();
+    if (screen)
+--- a/src/gallium/targets/osmesa/meson.build
++++ b/src/gallium/targets/osmesa/meson.build
+@@ -39,7 +39,7 @@
+   ],
+   dependencies : [
+     dep_ws2_32, dep_thread, dep_clock, dep_unwind, driver_swrast, idep_mesautil,
+-    driver_freedreno, idep_xmlconfig, dep_libdrm,
++    driver_freedreno, driver_panfrost, idep_xmlconfig, dep_libdrm,
+   ],
+   name_prefix : host_machine.system() == 'windows' ? '' : [],  # otherwise mingw will create libosmesa.dll
+   soversion : host_machine.system() == 'windows' ? '' : '8',

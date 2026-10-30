@@ -1,0 +1,4 @@
+# Commands run by the launchd job com.hakios.demo (see com.hakios.demo.plist).
+# A small triangle through the OpenGL ES library, to check the panfrost path before the panel's size.
+/redwood/bin/rwtouch wait 14
+/redwood/bin/gl_test 8 256 256
