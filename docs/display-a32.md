@@ -94,3 +94,26 @@ system doubled.
 
 So the A32's boot-args carry `fbwidth=810 fbheight=1800 fbscale=3 fb_filter=0`: 270 points, the
 A22's interface size, one-to-one-and-a-third to the panel, nearest neighbour.
+
+## The TE signal, measured (test102-103)
+
+The tearing that is left is not a 90 Hz panel being written too slowly: it is a 60 Hz panel
+being written at almost exactly the speed it scans.
+
+- **Frame rate**: the TE pin's intervals are 11,040 us and 5,622 us, alternating: **16.66 ms, 60 Hz**.
+- **Pulse**: the TE level is high for 5.6 ms of each frame, so there are **two edges per frame**
+  and the old `te_sync` wait (any edge, 5 ms debounce) could start a frame up to 5.6 ms late --
+  which is the intermittent tearing.
+- **Writing time**: the DSI link runs at the vendor's 1660 Mbps per lane, four lanes (830 MB/s);
+  a 1080x2400 frame is 7.8 MB, so **~9.4 ms** of transfer (11 measured). The panel's active scan
+  of the same frame is about 11 ms of the 16.7 ms period. The write and the scan are therefore
+  level, and the bottom of the panel is where the scan overtakes the write.
+- **Syncing to the rising edge only** (`te_edge=1`) removes most of the tearing and makes the
+  frame **much less responsive**: the wait is then up to a full 16.7 ms when the edge has just
+  passed, and the phone reads as "everything takes much longer, changing pages gets stuck".
+  Measured on the phone and rejected.
+
+So the choice is the old one: any TE edge (lowest latency, small tearing) or a stricter sync
+(more latency, less tearing). The physical fix would need the write to be faster than the active
+scan (a higher DSI rate than the panel allows) or a double-buffered GRAM, which this panel's
+vendor driver does not expose (command mode, one GRAM, no swap command).
