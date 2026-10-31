@@ -414,3 +414,36 @@ asserting after that pass. Until that is understood (a symbolised RenderBox stac
 `targetDeviceInfo`/feature answer it does not expect), widgets stay out; the extension
 processes do start and the placeholders are SpringBoard's.
 
+## Widgets: the missing RenderBox library (test99)
+
+The previous section had widgets stuck: `chronod` aborted in RenderBox right after its 316x316
+pass, and the placeholders stayed white. It was not a GPU feature and not MPS. It was a file.
+
+`select-system.py` drops every `.metallib` from the system image (SKIP_EXT), and
+`/System/Library/PrivateFrameworks/RenderBox.framework/default.metallib` is one of them. RenderBox
+loads it at startup:
+
+    RenderBox: unable to find default.metallib in %@
+    RenderBox precondition failure: %s.
+
+and a precondition failure is `abort()`. That is the stack that was seen as
+`RenderBox+0x73f34 <- ... <- RB::Device::render_pipeline_state <- RB::RenderQueue::encode`:
+the pipeline state function was being reached with no library, and the process died as the widget
+pass began. (The strings and the disassembly came out of RenderBox itself, extracted from the
+dyld shared cache with `ipsw dyld extract`.)
+
+The fix is the same one QuartzCore needed: the file travels in the small image, beside the
+framework's own, readonly.
+
+- build: `METAL_RENDERBOX=/path/to/RenderBox/default.metallib` copies it to
+  `/redwood/lib/RenderBox/default.metallib` (655,304 bytes, MTLB, out of the 20F66 root filesystem
+  image, `7z e rootfs.dmg System/Library/PrivateFrameworks/RenderBox.framework/default.metallib`);
+- `init.c`: `bind_dir_union("/redwood/lib/RenderBox",
+  "/System/Library/PrivateFrameworks/RenderBox.framework")`.
+
+Measured on the phone (test99, `metal_profile=1`): the widgets render -- the Weather one says
+"No weather data" (there is no service behind it) and the Calendar one says "THURSDAY 1" and
+"No events today". `chronod` may abort once before the first render and be restarted; after that
+the widgets stay up. The same library is what any SwiftUI application loads through RenderBox, so
+this is not only about widgets.
+
