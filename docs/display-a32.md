@@ -75,3 +75,9 @@ Measured on the phone:
 `fbscale` is an unsigned integer (2 or 3 to a point); the size is chosen with `fbwidth`/`fbheight`.
 The wallpaper's strips are sized from the view's bounds and follow the change without edits.
 
+**Why not 270 pt at 1080?** That is a scale of 4, and iOS only carries artwork for 2x and 3x.
+Measured (test97): with `fbscale=4`, `fbwidth=1080`, `fbheight=2400` the layout breaks -- the icons
+draw at their 3x size on a 4x grid, rows overlap their labels, the wallpaper is cropped and the
+status bar shows its test carrier capsule again. So 270 pt means drawing at 810x1800 and letting
+the presenter scale by 1.33; the 1:1 path is only available at 375 pt or at 360 pt
+(`fbwidth=1080 fbheight=2400 fbscale=3`).

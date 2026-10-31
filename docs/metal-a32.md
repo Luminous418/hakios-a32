@@ -393,3 +393,24 @@ GL=1 METAL=1 METAL_TREE=$HOME/metal-port FLASHBOOT=1 RC_JOBS=rc.jobs.metalprops 
 ```
 
 then pack `root.apfs` with `xnuloader/mkpayload.py` and flash only `boot` (`tools/chainboot.py`).
+
+## Widgets: what stops them (test98)
+
+Widgets (Weather, Calendar, the lock screen and Today View ones) stay **white or black and
+flicker**, with `chronod` running. Measured:
+
+- With `metal_profile=0` (Apple1 from the boot-arg) MPS refuses the device
+  (`MPSSupportsMTLDevice NO`) and `chronod` aborts with "Failed to get MPSDevice".
+- With `metal_profile=1` (Apple1 + Apple2) **MPS accepts** the device
+  (`MPSSupportsMTLDevice YES; families claimed: Apple1 Apple2`) and the abort moves: it now
+  happens right after RenderBox's widget pass, 316x316 with two colour attachments --
+  `fmt80` (BGRA8) cleared to red and `fmt65` cleared to zero -- a pass whose attachments "load
+  differently". The process is `chronod`, the caller is RenderBox, and no pipeline or draw was
+  refused by this driver in the log. The flicker is the same pass clearing to red before the
+  content that never comes.
+
+So the widget content path is not MPS and not this driver refusing a draw: it is RenderBox
+asserting after that pass. Until that is understood (a symbolised RenderBox stack, or a
+`targetDeviceInfo`/feature answer it does not expect), widgets stay out; the extension
+processes do start and the placeholders are SpringBoard's.
+
