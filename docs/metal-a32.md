@@ -324,6 +324,36 @@ layer tree, and the performance problem is the window server's per-layer cost, n
 passes themselves. A real fix has to be on the CoreAnimation/Metal side (fewer layers per commit,
 or a cheaper render-tree walk), not a boot-arg.
 
+## A real picture as the wallpaper (test79-90)
+
+The wallpaper is a `CAGradientLayer` at the bottom of the home screen's (and lock screen's)
+view. A picture was the obvious next step and it took four wrong theories to get there; what is
+worth keeping is the sequence, because each step said something:
+
+- **One layer with the whole 1080x2400 `CGImage`**: drew nothing (a black sheet). The image is
+  decoded and the layer stores it, but nothing appears.
+- **Sliced in the phone** with `CGImageCreateWithImageInRect` into six layers: SpringBoard died in
+  a respring loop. The slices are `CGImage`s that share the parent's data provider, and the
+  window server did not survive them.
+- **Sliced on the host** into six 1080x400 files, loaded as `UIImage` (JPEG, then PNG): the same
+  respring loop. So it was not the format.
+- The loop was **ours**: `objc_setAssociatedObject(view, &wallpaper_key, (id)1,
+  OBJC_ASSOCIATION_RETAIN)` retains **address 1**. SpringBoard died 20 ms after the line that
+  said the wallpaper was in (`Corpse Allowed`, no exception to send) -- which read exactly like
+  the picture being at fault. With a real object (the first `UIImage`) the strips draw.
+
+So the wallpaper is: `WALLPAPER_STRIPS` at build time (`wallpaper-0.png` ... in
+`/redwood/lib/`), cut from the user's picture on the host at 1080x400; each strip is a plain
+`CALayer` whose `contents` is that file's `CGImage`, `contentsGravity` resize, frame computed
+from `bounds.width / 1080` (the wallpaper view is 563x1250 points -- 1.5625x the panel, the
+parallax overscan -- so the factor is ~0.521). All are inserted at index 0, last strip first and
+the gradient last, because `insertSublayer:atIndex:` **raises** past the end and that raise is
+another respring. The gradient stays underneath as the fallback.
+
+Measured on the phone: the picture is continuous, no seams, and the screen looked *less* glitchy
+with it than with the gradient -- an opaque picture leaves the materials less to composite -- but
+the frame rate is still what it was (the per-layer cost above), not better.
+
 ## What is next
 
 - The per-draw cost of panfrost's command submission, which is what sets the frame rate
