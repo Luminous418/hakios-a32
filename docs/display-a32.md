@@ -44,3 +44,34 @@ clock, battery, widgets, icons, dock, centred and with correct colours.
 
 Six cores were tried and the phone ended in fastboot; eight leave no core for the watcher.
 Four is the stable choice, and the watcher needs one of them.
+
+## The size of the interface: points, not pixels (test93-96)
+
+iOS lays the interface out in **points**, and a point is not the panel's pixel: it is
+`drawable_width / fbscale`. The framebuffer this kernel reports defaults to the iPhone X's
+1125 x 2436 at three pixels a point, so the home screen is 375 x 812 points, drawn at 1125 x 2436
+and scaled to the 1080 x 2400 panel (bilinear, `fb_filter`).
+
+`fbwidth=` and `fbheight=` change the drawable, and with it the number of points:
+
+| drawable | points | where |
+|---|---|---|
+| 1125 x 2436 (default) | 375 x 812 | iPhone X's own size; icons and text look small on a 6.4" panel |
+| 810 x 1800 | **270 x 600** | the A32's choice: everything bigger, status bar fits |
+| 720 x 1600 | 240 x 533 | what a Galaxy A22 4G gets (its panel is 720 wide), and the point where the A32's status bar breaks |
+
+Measured on the phone:
+
+- **375 pt** is what the port had; correct but small for the panel.
+- **240 pt** (720 x 1600) is comfortable but **the status bar disappears**: this iOS 16.5 image is
+  an internal build, and with less room the left of the bar shows its test carrier capsule, an
+  orange pill with a dot and `rdar:45025538` (a radar number set as the carrier string), which
+  takes the whole bar and pushes the clock and the battery out. The same happens on the A22.
+- **270 pt** (810 x 1800) fits: clock and battery normal, icons and widgets at the size the A22
+  shows, and the drawable is **1.9 times fewer pixels** than 1125 x 2436, so the window server
+  has less to draw and the presenter scales 810 x 1800 to the panel by 1.33 (slightly softer
+  than native, sharper than the A22's 720).
+
+`fbscale` is an unsigned integer (2 or 3 to a point); the size is chosen with `fbwidth`/`fbheight`.
+The wallpaper's strips are sized from the view's bounds and follow the change without edits.
+
