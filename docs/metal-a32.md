@@ -278,9 +278,51 @@ rate stays at ~26 fps. The few app cases left are in blurred regions (a backdrop
 the screen) and in the panel's own scanout.
 
 **TE**: the DTBO gives the panel's tearing-effect signal on GPIO 44 (`lcm_dsi_te`, pinmux
-0x2c01, the `dsi_te` node's interrupt). The option is in the driver (`te_sync=1`): start the
-transfer on a TE edge, with a debounce and a fallback. Measured (test78): **no edges were seen**
-on the pin and the 20 ms timeout per frame cost the rate (19 fps), so it is off by default.
+0x2c01, the `dsi_te` node's interrupt). The option is in the driver (`te_sync=1`): poll the pin
+and start the transfer on an edge, with a debounce and a fallback. Measured on the phone
+(test80, counters in the kick): `mtk_kick: 2100 kicks; te edges 2100, timeouts 0` -- the pin
+does move, every frame, and every kick was on an edge; the rate stayed at 26-27 fps. So the
+remaining panel tearing is not the start of the transfer: it is the DDIC's GRAM write during
+its own scanout (the transfer is 11 ms of a 16.7 ms frame).
+
+The DSI's own external-TE input (`DSI_TXRX_CTRL = 0x0001023c`, `EXT_TE_EN`, which the vendor
+writes after the panel init) was tried too (`dsi_ext_te=1`, test81): it changed nothing on
+screen and **dropped the rate to 11 fps**, so it is off and not worth pursuing. The vendor's
+CMDQ/VM flow (`VM_CMD_START`, `TE_RDY`) is the same update we already do (mmsys+0xF0, CMDQ
+0x2c3909, `DSI_START` 0/1); what it adds is the frame engine's own latch, and porting that is a
+display-driver project, not a boot-arg.
+
+## The App Library, the materials, and why they are slow (test82-85)
+
+The App Library (the page to the right of the home screen) is the slowest screen: measured on the
+phone at **7-15 fps** against ~26-27 on the home screen. What the logs say:
+
+- The layer tree there has **~989 layers in 11 windows** (the home screen has fewer); the frame
+  rate falls almost linearly with the layer count, about **70 us per layer per frame**.
+- The SpringBoard main thread is **not** the bottleneck: the run-loop probe (`touch_lat=1`,
+  `tl:` lines) measured 1.4 ms of work before the commit and 0.1 ms of commit on average. The
+  time goes into the window server's render tree and the materials.
+- The blur is **not** a `CAFilter` and **not** `UIVisualEffectView`: 68 visual-effect views were
+  made plain and no blur filter ever reached `+[CAFilter filterWithName:]`, yet the materials
+  still blurred. It is `MTMaterialView`'s backdrop layers (`WGWidgetListViewController...platters`,
+  `SBIconFolderImage.folderLight`, `<UIScrollView:...>:destOut`).
+
+What does not work, measured:
+
+- `CABackdropLayer.setGroupName:` -> nil (96 groups set aside): the blur stays. The group name is
+  not what selects the filter chain.
+- Hiding backdrop layers or clearing their `backgroundFilters` (test84): **SpringBoard and
+  chronod abort in RenderBox every ~11 s** -- a respring loop. Never mutate these layers.
+- Posting `UIAccessibilityReduceTransparencyStatusDidChangeNotification` to force reduce
+  transparency (test85): the constant is not a data symbol on 20F66, `dlsym` read 417723056
+  through it, and posting that value produced the same RenderBox abort loop. The source now
+  refuses any notification number outside 1000..1100. The preference alone (which UIKit reads at
+  startup) did not visibly change the materials.
+
+Conclusion: the material blur in this port cannot be turned off from SpringBoard by touching the
+layer tree, and the performance problem is the window server's per-layer cost, not the blur
+passes themselves. A real fix has to be on the CoreAnimation/Metal side (fewer layers per commit,
+or a cheaper render-tree walk), not a boot-arg.
 
 ## What is next
 
