@@ -46,6 +46,123 @@ static volatile uint32_t * gMTKConfig;
 static volatile uint32_t * gMTKDSI;
 static bool gMTKMutexOn;
 
+/*
+ * The panel's TEARING EFFECT signal: the DDIC pulses GPIO 44 at the start of every frame (the DT's
+ * lcm_dsi_te, pinmux 0x2c01, and the dsi_te node whose interrupt is that pin). Starting the DSI
+ * transfer on a TE edge is what keeps the DDIC's scanout and the GRAM write apart; without it the
+ * transfer begins wherever the presenter happens to be, the scanout can pass the write, and the
+ * panel shows the old frame above the new (what was left of the tearing after the framebuffer
+ * race). Polled here, on the presenter's own thread, with a timeout and a fallback: if no edge is
+ * seen in the first frames the pin is not wired as we think, and the kick goes as before.
+ * Measured on the A32 (test78): no edges were seen on gpio44 and the 20 ms timeout cost frames
+ * (19 fps against 26), so this is off unless te_sync=1 asks for it.
+ */
+static TUNABLE(uint32_t, gTESync, "te_sync", 0);   /* opt-in: see below */
+static volatile uint32_t * gTE;
+static int gTEState;                    /* 0: untried, 1: edges seen, -1: no TE here */
+static uint64_t gTELast;
+
+static void
+te_init(void)
+{
+	if (gTE != NULL || gTEState != 0) {
+		return;
+	}
+	gTE = (volatile uint32_t *) ml_io_map(0x10005000, 0x1000);
+	if (gTE == NULL) {
+		gTEState = -1;
+		return;
+	}
+	/* pin 44: function 0 (GPIO), direction in. MODE at 0x300 + (44/8)*0x10, four bits a pin;
+	 * bank 1, bit 12 for direction and input. */
+	{
+		uint32_t mode = gTE[0x350 / 4];
+
+		mode &= ~(0xfu << ((44 % 8) * 4));
+		gTE[0x350 / 4] = mode;
+	}
+	gTE[0x018 / 4] = 1u << 12;              /* DIR_CLR bank 1: input */
+}
+
+static uint32_t
+te_level(void)
+{
+	return (gTE[0x210 / 4] >> 12) & 1u;     /* DIN bank 1, bit 12 */
+}
+
+/* One edge, at most one per 5 ms (the pulse has two, a few microseconds apart). */
+static bool
+te_wait(uint32_t ms)
+{
+	uint32_t start, i;
+	uint64_t now;
+
+	if (!gMTKKick || !gTESync || gTEState < 0) {
+		return false;
+	}
+	if (gTEState == 0) {
+		te_init();
+		if (gTE == NULL) {
+			return false;
+		}
+	}
+	start = te_level();
+	for (i = 0; i < ms * 1000; i++) {
+		if (te_level() != start) {
+			now = mach_absolute_time();
+			{
+				uint64_t us;
+
+				absolutetime_to_nanoseconds(now - gTELast, &us);
+				if (gTELast != 0 && us < 5u * NSEC_PER_MSEC) {
+					start = te_level();
+					continue;
+				}
+			}
+			gTELast = now;
+			if (gTEState == 0) {
+				gTEState = 1;
+				IOLog("te: gpio44: an edge seen; the DSI transfer starts on it\n");
+			}
+			return true;
+		}
+		delay(1);
+	}
+	if (gTEState == 0) {
+		gTEState = -1;
+		IOLog("te: gpio44 never moved in %u ms; the kick goes without it\n", ms);
+	}
+	return false;
+}
+
+/* Is the DSI done with the frame before? (0x1401400c bit 31, DSI_BUSY) A frame is 11 ms on
+ * this panel, and the framebuffer must not be overwritten while the DSI reads it: the watcher
+ * in the loader used to start the transfer whenever it liked, and the presenter then drew the
+ * next frame into the same memory, so the panel received half of each (the torn sheet of
+ * test77). The presenter waits for idle before drawing and kicks after; mtk_kick=1. */
+static bool
+mtk_panel_idle(uint32_t ms)
+{
+	uint32_t waited;
+
+	if (!gMTKKick) {
+		return true;
+	}
+	if (gMTKDSI == NULL) {
+		gMTKDSI = (volatile uint32_t *) ml_io_map(0x14014000, 0x1000);
+	}
+	if (gMTKDSI == NULL) {
+		return true;
+	}
+	for (waited = 0; waited < ms * 100; waited++) {
+		if ((gMTKDSI[0x0c / 4] & 0x80000000u) == 0) {
+			return true;
+		}
+		delay(10);
+	}
+	return false;
+}
+
 static void
 mtk_panel_kick(void)
 {
@@ -61,6 +178,8 @@ mtk_panel_kick(void)
 	if (gMTKMutex == NULL || gMTKConfig == NULL || gMTKDSI == NULL) {
 		return;
 	}
+	(void)mtk_panel_idle(50);
+	(void)te_wait(20);
 	if (!gMTKMutexOn) {
 		gMTKDSI[0x90 / 4] = 0x3c;       /* DSI_MEM_CONTI = WMEM_CONTI: frame data to the DDIC */
 		gMTKMutex[0x30 / 4] = 0x90380;  /* MOD0: OVL0(7)|OVL0_2L(8)|RDMA0(9)|DSI0(16)|PWM0(19) */
@@ -1069,6 +1188,8 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces, const
 		    swapWord(swap, SWAP_ID), fSwapsShown, swapWord(swap, SWAP_SURFACE(0)), swapWord(swap, SWAP_SURFACE(1)),
 		    swapWord(swap, SWAP_SURFACE(2)), swapWord(swap, SWAP_SURFACE(3)), set, swapWord(swap, SWAP_LAYERS_CLEARED));
 	}
+	/* the frame before must be out of the DSI before this frame overwrites the memory it reads */
+	(void)mtk_panel_idle(50);
 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
 		int32_t src[4], dst[4];

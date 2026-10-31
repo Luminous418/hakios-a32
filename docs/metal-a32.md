@@ -257,6 +257,31 @@ Some glitches remain (a band of a second gradient from a nested controller was o
 inserted only in the controller that owns the whole screen; partial redraws of moving icons are
 still visible), which is the next thing to chase.
 
+## The framebuffer race behind the rest of the tearing (test76-78)
+
+After the swap-sequence fix the heavy tearing was gone, but the home screen still tore: a page
+swipe showed half of one frame and half of the next. The reason was not the GPU and not the
+panel: the **watcher in `mtkloader`** started the DSI transfer every 16 ms, whenever it liked,
+while XNU's presenter was copying the next frame into the same framebuffer. The DSI read the
+memory for 11 ms, so a frame that arrived during the transfer went out in pieces.
+
+The display is now serialized by one side:
+
+- `mtkloader` is built with `-DWATCHER_NO_KICK=1`: its watcher still keeps the return snapshot,
+  but does not start transfers;
+- XNU's presenter waits for `DSI_BUSY` (0x1401400c bit 31) to clear **before drawing** the next
+  frame into the framebuffer, draws, and kicks (`mtk_kick=1`) after. No write overlaps a
+  transfer.
+
+Measured on the phone: "una diferencia notoria, considerablemente menos" tearing, and the frame
+rate stays at ~26 fps. The few app cases left are in blurred regions (a backdrop filter reading
+the screen) and in the panel's own scanout.
+
+**TE**: the DTBO gives the panel's tearing-effect signal on GPIO 44 (`lcm_dsi_te`, pinmux
+0x2c01, the `dsi_te` node's interrupt). The option is in the driver (`te_sync=1`): start the
+transfer on a TE edge, with a debounce and a fallback. Measured (test78): **no edges were seen**
+on the pin and the 20 ms timeout per frame cost the rate (19 fps), so it is off by default.
+
 ## What is next
 
 - The per-draw cost of panfrost's command submission, which is what sets the frame rate

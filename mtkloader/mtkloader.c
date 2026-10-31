@@ -1861,8 +1861,14 @@ void watcher_main(void)
 				__asm__ volatile("wfe");
 			}
 		}
+#ifndef WATCHER_NO_KICK
 		watcher_display_kick();
 		dbg_delay_ms(16);
+#else
+		/* The kernel's presenter draws the frame, waits for the DSI to be idle and kicks it
+		 * itself (mtk_kick=1): the watcher only watches and returns. */
+		dbg_delay_ms(16);
+#endif
 	}
 	dcache_clean_range((uint64_t)&xnu_back, 8);
 	if (xnu_back) {
@@ -2496,7 +2502,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 #if MSDC_TEST
 /*
  * Can we read the phone's eMMC with what LK left set up? Checked against bytes we know: the GPT
- * header at block 1 ("EFI PART") and the start of boot, which holds the image this very
+ * header at block 1 ("EFI PART") and the start of boot_a, which holds the image this very
  * program came from ("ANDROID!"). Reads only.
  */
 static void msdc_dump(const char *name, uint64_t lba, const uint8_t *b, int ok)
@@ -2582,7 +2588,7 @@ static void msdc1_probe(void)
 static void msdc_self_test(void)
 {
 	static uint8_t buf[4096] __attribute__((aligned(16)));
-	const uint64_t boot_lba = 1162448; /* SM-A325F: boot is mmcblk0p36, 65536 blocks */
+	const uint64_t boot_a_lba = 1162448; /* SM-A325F: boot is mmcblk0p36, 65536 blocks */
 	int ok;
 
 	/* a hang in here must not keep the phone: the watchdog brings Android back */
@@ -2625,12 +2631,12 @@ static void msdc_self_test(void)
 	msdc_dump("GPT header ", 1, buf, ok);
 
 	memset(buf, 0, sizeof(buf));
-	ok = msdc_read(boot_lba, 1, buf);
-	msdc_dump("boot     ", boot_lba, buf, ok);
+	ok = msdc_read(boot_a_lba, 1, buf);
+	msdc_dump("boot_a     ", boot_a_lba, buf, ok);
 
 	memset(buf, 0, sizeof(buf));
-	ok = msdc_read(boot_lba, 8, buf);
-	out("boot 8 blocks: ");
+	ok = msdc_read(boot_a_lba, 8, buf);
+	out("boot_a 8 blocks: ");
 	if (ok) {
 		uint32_t ksize = *(volatile uint32_t *)(buf + 8);
 		out(buf[0] == 'A' ? "ANDROID! kernel_size " : "NOT a boot image, ");
@@ -2648,7 +2654,7 @@ static void msdc_self_test(void)
 	}
 	out("\n");
 
-	/* How fast, how far, and is what comes back right: a checksum of 4 MB of boot, which
+	/* How fast, how far, and is what comes back right: a checksum of 4 MB of boot_a, which
 	 * is the image this program was flashed in, so the host can check it (tools/msdc-test.sh). */
 	for (uint32_t blocks = 256; blocks <= 8192; blocks *= 4) {
 		const uint64_t at = 0xa0000000ULL;
@@ -2659,7 +2665,7 @@ static void msdc_self_test(void)
 
 		t0 = dbg_ticks();
 		for (uint32_t r = 0; r < rounds && fine; r++) {
-			fine = msdc_read(boot_lba + (uint64_t)r * blocks, blocks, (void *)at);
+			fine = msdc_read(boot_a_lba + (uint64_t)r * blocks, blocks, (void *)at);
 			for (uint32_t i = 0; fine && i < blocks * 512 / 4; i++) {
 				sum = sum * 31u + *(volatile uint32_t *)(at + 4 * i);
 			}
