@@ -447,3 +447,15 @@ Measured on the phone (test99, `metal_profile=1`): the widgets render -- the Wea
 the widgets stay up. The same library is what any SwiftUI application loads through RenderBox, so
 this is not only about widgets.
 
+## Where the frame time is not (test104)
+
+Before spending a GPU clock on it, the numbers: the Mali is **busy 0-1 % of every 5 s window**
+(vertex and tiler ~50 jobs of 90 us, fragment ~50 jobs of 900 us), and the Metal runtime creates
+**one to three textures per window**. The frame time is therefore not the GPU and not texture
+churn; it is CPU work in CoreAnimation's render server (the same ~70 us per layer measured
+above), with the presenter at 5-9 ms a frame and the GPU idle.
+
+So the GPU's 364 MHz (the bootloader's main-PLL third, when the part is rated at 950 MHz) is not
+the lever it looks like; the OPP table in the vendor kernel goes to 975 MHz but the block is not
+the bottleneck. The A32's boot-args stay with six CPUs (`cpus=6`), `fb_threads=4`, the nearest
+neighbour presenter and the two A75s bound to CoreAnimation's commit and fence threads.
