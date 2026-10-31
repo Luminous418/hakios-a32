@@ -81,3 +81,16 @@ draw at their 3x size on a 4x grid, rows overlap their labels, the wallpaper is 
 status bar shows its test carrier capsule again. So 270 pt means drawing at 810x1800 and letting
 the presenter scale by 1.33; the 1:1 path is only available at 375 pt or at 360 pt
 (`fbwidth=1080 fbheight=2400 fbscale=3`).
+
+**The filter matters more than it looked (test100).** With the drawable at 810x1800 the presenter
+enlarges by 1.33 to the panel. Bilinear (`fb_filter=1`, the default) blends four source pixels per
+panel pixel: measured 10 fps in a window of the home screen with the widgets up, 17-20 ms a frame
+in the driver. With nearest neighbour (`fb_filter=0`) the same window reads **20 fps and 9 ms a
+frame** -- the blending was the cost -- and the text is *sharper*, not softer: at a ratio above 1
+each source pixel is written whole instead of being smeared into its neighbour. Measured on the
+phone: "se nota mucho más suave, apenas hay stutters, y se ven mejor los textos". The widget page
+still drops to 4 fps while it loads (RenderBox and the material passes), but the rest of the
+system doubled.
+
+So the A32's boot-args carry `fbwidth=810 fbheight=1800 fbscale=3 fb_filter=0`: 270 points, the
+A22's interface size, one-to-one-and-a-third to the panel, nearest neighbour.
