@@ -354,6 +354,27 @@ Measured on the phone: the picture is continuous, no seams, and the screen looke
 with it than with the gradient -- an opaque picture leaves the materials less to composite -- but
 the frame rate is still what it was (the per-layer cost above), not better.
 
+## The two A75s: binding CoreAnimation's threads (test91-92)
+
+The kernel has `kern.hakios.bind_cpu=N` (`bsd/dev/hakios.mali.c`): the calling thread runs on
+logical processor N from then on. Nothing used it, and this kernel's scheduler does not tell the
+two Cortex-A75s (logical 1 and 2) from the six A55s.
+
+The Metal runtime now binds each thread that comes through it, once:
+
+- the **committing thread** (CoreAnimation's render thread, which in this port is inside
+  `backboardd`, pid 11) to logical **1**, an A75;
+- the **fence/completion thread** to logical **2**, the other A75, so the two do not queue
+  behind one another.
+
+`RWM_CPU=N` puts both where N says; `RWM_CPU=-1` leaves the scheduler alone. Measured on the
+phone: with both on one A75 the screen was already less stuttery than unbound; splitting them
+gave the better of the two ("lo noto mejor"). The frame windows read 23, 20 and 13 fps (a home
+screen, a scroll, the App Library), against 17 for the window measured before. The render server
+was doing 566-5021 draws a window at 13-16 ms of GPU wait.
+
+It is not smooth: the per-layer render-tree cost (the section above) is still the floor.
+
 ## What is next
 
 - The per-draw cost of panfrost's command submission, which is what sets the frame rate
