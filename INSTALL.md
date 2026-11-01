@@ -14,6 +14,7 @@ run's log.
 ## What you need
 
 - a Galaxy A32 4G (SM-A325F) with the bootloader unlocked;
+- **the stock ROM and its stock kernel** (Android 13 / One UI 5, from Samsung's own firmware);
 - Android 13, rooted (Magisk), with **TWRP** available, and **your stock `boot` image saved**;
 - a Linux host with `adb`, `python3`, and the HakiOS common tree built: the cross toolchain
   (`xnu-deps`), the kernel, the user land, and the iOS system image made from **your own IPSW**
@@ -21,6 +22,66 @@ run's log.
 - this repository, and the common tree's `devices/samsung-a32` pieces (the loader and its tools).
 
 Nothing of iOS, no firmware and no image of the phone is in the repository; you bring those.
+
+**Stock ROM, stock kernel.** The loader does not replace Android's kernel: `chainboot.py` takes
+the stock `boot` image and puts the loader in front of that kernel, so the phone still boots the
+ROM it shipped with. A custom kernel, a custom ROM or a GKI/vendor_boot layout is not what this
+was built against: the image layout, the ramdisk and the partition table all change, and the
+chain is not expected to survive it. The GPT must also be the stock one, with a `userdata` big
+enough to give 4 GiB to `xnusys` (below). Root (Magisk) is needed to ask for a run and TWRP to
+write `boot`.
+
+## 0. One time only: make `xnusys`
+
+`xnusys` is where the iOS system image lives on the phone's flash (4 GiB). It is carved out of the
+end of `userdata`, once, and **is destructive**: back up everything you care about, and expect to
+format `userdata` afterwards. The GPT is edited on the host by `tools/gpt-carve.py` from the
+common tree; the phone is only read and then written, from recovery.
+
+From TWRP, with `userdata` **unmounted**:
+
+```sh
+# the disk that holds the GPT, and its size in 512-byte sectors
+adb shell 'ls -l /dev/block/by-name/userdata'      # e.g. /dev/block/mmcblk0pNN -> disk mmcblk0
+adb shell 'cat /sys/block/mmcblk0/size'            # TOTAL sectors
+
+# the two copies of the GPT: LBA 0..33, and the last 33 sectors
+adb shell 'dd if=/dev/block/mmcblk0 of=/tmp/gpt-pri.bin bs=512 count=34'
+adb shell 'dd if=/dev/block/mmcblk0 of=/tmp/gpt-sec.bin bs=512 skip=$((TOTAL - 33)) count=33'
+adb pull /tmp/gpt-pri.bin; adb pull /tmp/gpt-sec.bin
+```
+
+On the host, with the common tree's tool (it checks every entry and stops if anything is in the
+way):
+
+```sh
+python3 ~/hakios-mt6768/tools/gpt-carve.py gpt-pri.bin gpt-sec.bin TOTAL
+# writes gpt-pri.bin.new and gpt-sec.bin.new: userdata loses its last 4 GiB, "xnusys" takes them
+```
+
+Write them back, carefully (the same disk, the same offsets):
+
+```sh
+adb push gpt-pri.bin.new /tmp/gpt-pri.bin; adb push gpt-sec.bin.new /tmp/gpt-sec.bin
+adb shell 'dd if=/tmp/gpt-pri.bin of=/dev/block/mmcblk0 bs=512 seek=0 count=34 conv=fsync'
+adb shell 'dd if=/tmp/gpt-sec.bin of=/dev/block/mmcblk0 bs=512 seek=$((TOTAL - 33)) count=33 conv=fsync'
+adb shell 'sync'
+```
+
+Reboot to recovery and **format `userdata`** there (the filesystem still believes it owns the
+space `xnusys` now has; formatting is the simple, safe answer, and the data was backed up). Check
+that the partition is there:
+
+```sh
+adb shell 'ls -l /dev/block/by-name/xnusys'
+```
+
+Then put the system image into it; the common tree has the tool for that
+(`system-flash.sh`, the system image into `xnusys`). Nothing else in this procedure writes
+`xnusys` again.
+
+If any of this feels like guesswork on your phone (different disk name, different GPT), stop: a
+wrong write to LBA 0..33 loses the partition table.
 
 ## 1. Build the kernel
 
