@@ -117,3 +117,40 @@ So the choice is the old one: any TE edge (lowest latency, small tearing) or a s
 (more latency, less tearing). The physical fix would need the write to be faster than the active
 scan (a higher DSI rate than the panel allows) or a double-buffered GRAM, which this panel's
 vendor driver does not expose (command mode, one GRAM, no swap command).
+
+## Brightness (test106-108)
+
+The panel is a Samsung s6e3fc3 in command mode; brightness is DCS **0x51** with two bytes (10 bits,
+high two first), and it only takes effect in the panel's normal mode:
+
+- **0x53 0x20** -- write_control_display_brightness, normal (the vendor's other values are 0xE8 for
+  HBM, 0x28 HBM off, 0x20/0xE0 "dimming off");
+- **0x7A 0x00** -- self-mask off. The vendor's init writes an image into the self-mask and enables
+  it, and with it on the 0x51 value is ignored (measured: 0x51 alone changed nothing, twice);
+- **0x51 hi lo** -- the level, 0..1023.
+
+The packets are written exactly as the vendor's `mtk_dsi_cmdq` writes them: a long packet (0x39)
+has the byte count in bits 16-23 of the CMDQ header word, the payload follows in the next word;
+a short write with one parameter is 0x15 with the command and parameter in bytes 2 and 3. Both
+forms were proven on this panel first with **0x28 (display off)**, which turned the screen black
+as a short write and again as a long write.
+
+In this port:
+
+- boot-arg `brightness=N` (0..1023) sets it once, at the first frame;
+- `kern.hakios.brightness` (sysctl, writable by anybody) is applied by the presenter on its next
+  frame, after the DSI is idle: that is the channel a user-space control would use;
+- the vendor's brightness *tables* (dim/HBM/ACL, per level and per panel revision) are not ported;
+  0x53 0x20 + 0x51 is what works, measured at 20/1023 (the screen went almost black).
+
+**The iOS slider does not reach it (test108).** Settings and Control Center move the slider, but
+nothing arrives: no `com.apple.backboard.displaybrightness` notification from Preferences (its
+binary contains that name), and SpringBoard's `-[SBDisplayBrightnessController
+_setBrightnessLevel:animated:]` is not called either (the hooks were in place). The notification
+*chain* itself works: a self test that posts the notification with state 0 from SpringBoard dims
+the panel to black -- through backboardd's listener, `kern.hakios.brightness`, and the presenter.
+backboardd must register *after* notifyd is up (it starts long before it), so the registration is
+retried every two seconds.
+
+Left as it boots: no brightness boot-arg, the panel keeps the bootloader's level, and the sysctl
+is there for a control that can reach it later.
